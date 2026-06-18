@@ -329,6 +329,15 @@ class AuthViewSet(viewsets.ViewSet):
         try:
             # Decode the refresh token to get the jti (JWT ID) and expiration
             refresh = RefreshToken(refresh_token)
+
+            # Verify the token belongs to the authenticated user (prevent token hijacking)
+            token_user_id = refresh.get('user_id')
+            if str(token_user_id) != str(request.user.id):
+                return Response(
+                    {'detail': 'Refresh token does not belong to authenticated user'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
             jti = refresh.get('jti')
             exp = refresh.get('exp')
 

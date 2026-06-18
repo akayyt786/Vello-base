@@ -12,7 +12,7 @@ from django.db import transaction
 from django.shortcuts import get_object_or_404
 
 from core.models import Project, ProjectMembership
-from core.permissions import IsProjectMember
+from core.permissions import IsProjectMember, IsProjectEditorOrOwner
 from data.models import Collection, Document
 from data.serializers import (
     CollectionSerializer,
@@ -32,6 +32,12 @@ class CollectionViewSet(viewsets.ViewSet):
     POST /api/projects/{project_id}/collections/ — create collection
     """
     permission_classes = [IsAuthenticated, IsProjectMember]
+
+    def get_permissions(self):
+        """Enforce role-based access: reads for members, writes for editors/owners."""
+        if self.action in ('list', 'retrieve'):
+            return [IsAuthenticated(), IsProjectMember()]
+        return [IsAuthenticated(), IsProjectEditorOrOwner()]
 
     def get_project(self, project_id: str) -> Project:
         """Get project and verify user access."""
@@ -147,6 +153,12 @@ class DocumentViewSet(viewsets.ViewSet):
     DELETE /api/projects/{project_id}/collections/{collection}/docs/{doc_id}/ — delete document
     """
     permission_classes = [IsAuthenticated, IsProjectMember]
+
+    def get_permissions(self):
+        """Enforce role-based access: reads for members, writes for editors/owners."""
+        if self.action in ('list', 'retrieve'):
+            return [IsAuthenticated(), IsProjectMember()]
+        return [IsAuthenticated(), IsProjectEditorOrOwner()]
 
     def get_project(self, project_id: str) -> Project:
         """Get project and verify user access."""
@@ -461,6 +473,10 @@ class TransactionViewSet(viewsets.ViewSet):
     POST /api/projects/{project_id}/transaction/ — execute transaction
     """
     permission_classes = [IsAuthenticated, IsProjectMember]
+
+    def get_permissions(self):
+        """Transactions are always write operations — require editor/owner role."""
+        return [IsAuthenticated(), IsProjectEditorOrOwner()]
 
     def get_project(self, project_id: str) -> Project:
         """Get project and verify user access."""
