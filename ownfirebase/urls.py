@@ -1,0 +1,26 @@
+"""
+URL configuration for Own Firebase (ownfirebase) project.
+"""
+
+from django.contrib import admin
+from django.urls import path, include
+from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
+
+urlpatterns = [
+    # Django admin
+    path('admin/', admin.site.urls),
+
+    # API schema (OpenAPI / Swagger)
+    path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
+    path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
+    path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
+
+    # DRF auth endpoints
+    path('api/auth/', include('rest_framework.urls')),
+
+    # API v1
+    path('api/v1/', include('api.urls')),
+
+    # Data API (Firestore-like)
+    path('api/', include('data.urls')),
+]

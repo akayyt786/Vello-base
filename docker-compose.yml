@@ -1,0 +1,195 @@
+version: '3.9'
+
+services:
+  # PostgreSQL 16: ACID store with RLS, JSONB, pgvector
+  postgres:
+    image: postgres:16-alpine
+    container_name: ownfirebase-postgres
+    environment:
+      POSTGRES_DB: ${DATABASE_NAME:-ownfirebase}
+      POSTGRES_USER: ${DATABASE_USER:-postgres}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-postgres}
+      POSTGRES_INITDB_ARGS: "-c rls=on"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql
+    networks:
+      - ownfirebase
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis: channel layer, cache, Celery broker, presence
+  redis:
+    image: redis:7-alpine
+    container_name: ownfirebase-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - ownfirebase
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Django: main app server (Gunicorn + Daphne for ASGI)
+  django:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ownfirebase-django
+    command: >
+      bash -c "
+        python manage.py migrate &&
+        python manage.py createcachetable &&
+        daphne -b 0.0.0.0 -p 8000 ownfirebase.asgi:application
+      "
+    environment:
+      DJANGO_SETTINGS_MODULE: ownfirebase.settings
+      DEBUG: "False"
+      ALLOWED_HOSTS: "localhost,127.0.0.1,django"
+      DATABASE_NAME: ${DATABASE_NAME:-ownfirebase}
+      DATABASE_USER: ${DATABASE_USER:-postgres}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-secret-key-change-in-prod}
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ownfirebase
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/docs/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Celery: background tasks
+  celery:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ownfirebase-celery
+    command: celery -A ownfirebase worker -l info
+    environment:
+      DJANGO_SETTINGS_MODULE: ownfirebase.settings
+      DATABASE_NAME: ${DATABASE_NAME:-ownfirebase}
+      DATABASE_USER: ${DATABASE_USER:-postgres}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-secret-key-change-in-prod}
+    volumes:
+      - .:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ownfirebase
+
+  # Celery Beat: scheduled tasks
+  celery_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ownfirebase-celery-beat
+    command: celery -A ownfirebase beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    environment:
+      DJANGO_SETTINGS_MODULE: ownfirebase.settings
+      DATABASE_NAME: ${DATABASE_NAME:-ownfirebase}
+      DATABASE_USER: ${DATABASE_USER:-postgres}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-secret-key-change-in-prod}
+    volumes:
+      - .:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ownfirebase
+
+  # Migrations: run migrations on startup
+  migrations:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ownfirebase-migrations
+    command: python manage.py migrate
+    environment:
+      DJANGO_SETTINGS_MODULE: ownfirebase.settings
+      DATABASE_NAME: ${DATABASE_NAME:-ownfirebase}
+      DATABASE_USER: ${DATABASE_USER:-postgres}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-secret-key-change-in-prod}
+    volumes:
+      - .:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - ownfirebase
+    profiles:
+      - migrations
+
+  # Tests: run pytest suite (CI)
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ownfirebase-tests
+    command: pytest --cov=.
+    environment:
+      DJANGO_SETTINGS_MODULE: ownfirebase.settings
+      DATABASE_NAME: ${DATABASE_NAME:-ownfirebase_test}
+      DATABASE_USER: ${DATABASE_USER:-postgres}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      REDIS_URL: redis://redis:6379/1
+      SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-secret-key-change-in-prod}
+    volumes:
+      - .:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ownfirebase
+    profiles:
+      - tests
+
+networks:
+  ownfirebase:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:

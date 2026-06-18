@@ -1,0 +1,249 @@
+================================================================================
+AUTH SERVICE IMPLEMENTATION — PHASE 1 MVP
+Own Firebase Django Rebuild
+================================================================================
+
+COMPLETION SUMMARY:
+
+1. MODELS (core/models.py)
+   ✓ UserProfile (already existed, already had custom_claims JSONField)
+   ✓ RefreshTokenBlacklist (NEW)
+     - Stores blacklisted token JTIs for logout revocation
+     - Indexed by jti and (user, created_at)
+     - Includes expires_at for database cleanup
+
+2. SERIALIZERS (api/serializers.py)
+   ✓ RegisterSerializer (enhanced)
+     - Validates password strength using Django validators
+     - Checks password confirmation
+   ✓ LoginSerializer (already existed)
+   ✓ CustomTokenObtainPairSerializer (NEW)
+     - Extends TokenObtainPairSerializer
+     - Injects email, email_verified, sign_in_provider, custom_claims into JWT
+     - Mirrors Firebase custom claims in token payload
+   ✓ RefreshTokenSerializer (NEW)
+     - Custom serializer for token refresh with blacklist support
+   ✓ CustomClaimsSerializer (NEW)
+     - Validates user_id and claims JSON
+     - Enforces 1000-byte limit (Firebase-compatible)
+   ✓ MeSerializer (NEW)
+     - Response serializer for /api/auth/me/ endpoint
+     - Returns user, profile, email_verified, sign_in_provider, custom_claims
+
+3. VIEWS (api/views.py) — AuthViewSet
+   ✓ POST /api/auth/register/
+     - Create new user with email/password
+     - Validates duplicate email
+     - Creates UserProfile with empty custom_claims
+     - Returns access + refresh tokens (JWT pair)
+     - Status: 201 Created on success
+   
+   ✓ POST /api/auth/login/
+     - Authenticate with email/password
+     - Optional project_id parameter for multi-tenant
+     - Returns access + refresh tokens
+     - Logs failed attempts for security
+     - Status: 200 OK on success, 401 Unauthorized on failure
+   
+   ✓ POST /api/auth/refresh/
+     - Refresh expired access token with refresh token
+     - Validates token not blacklisted
+     - Returns new access token (and refresh if ROTATE_REFRESH_TOKENS=True)
+     - Status: 200 OK on success, 401 if invalid/expired
+   
+   ✓ GET /api/auth/me/
+     - Get current user profile + custom claims
+     - Requires Bearer token authentication
+     - Returns user, profile, email_verified, sign_in_provider, custom_claims
+     - Status: 200 OK if authenticated, 401 if not
+   
+   ✓ POST /api/auth/set-custom-claims/
+     - Admin-only endpoint to set custom claims on a user
+     - Validates claims size (max 1000 bytes)
+     - Claims appear in JWT on next login (immediate, no delay)
+     - Status: 200 OK on success, 403 Forbidden if not admin, 404 if user not found
+   
+   ✓ POST /api/auth/logout/
+     - Blacklist refresh token to prevent reuse
+     - Extracts jti from token and creates RefreshTokenBlacklist entry
+     - Prevents all future token refreshes with that token
+     - Status: 204 No Content on success
+   
+   ✓ POST /api/auth/anonymous-signin/
+     - Create anonymous user with unique username/email
+     - Sets sign_in_provider to 'anonymous'
+     - No authentication required
+     - Returns access + refresh tokens
+     - Status: 201 Created
+
+4. AUTHENTICATION BACKEND (core/backends.py)
+   ✓ CustomJWTAuthentication (NEW)
+     - Extends DRF's JWTAuthentication
+     - Verifies JWT signature using SIMPLE_JWT['SIGNING_KEY']
+     - Checks RefreshTokenBlacklist for revoked tokens
+     - Raises 401 if token is blacklisted or invalid
+     - Attaches decoded token claims to request.token_claims
+     - Returns (user, validated_token) tuple for DRF
+
+5. SETTINGS CONFIGURATION (ownfirebase/settings.py)
+   ✓ REST_FRAMEWORK['DEFAULT_AUTHENTICATION_CLASSES']
+     - Changed from JWTAuthentication to CustomJWTAuthentication
+   ✓ SIMPLE_JWT Configuration
+     - ALGORITHM: HS256 (HMAC with shared secret key)
+     - ACCESS_TOKEN_LIFETIME: 15 minutes (Phase 1 MVP, Firebase is 1 hour)
+     - REFRESH_TOKEN_LIFETIME: 7 days (Firebase is 30 days)
+     - ROTATE_REFRESH_TOKENS: True (new token on each refresh)
+     - BLACKLIST_AFTER_ROTATION: True (old token revoked)
+     - TOKEN_OBTAIN_SERIALIZER: CustomTokenObtainPairSerializer
+     - TOKEN_REFRESH_SERIALIZER: RefreshTokenSerializer
+
+6. URL ROUTING (api/urls.py)
+   ✓ Updated auth_urls list with all 7 endpoints:
+     - POST /api/auth/register/
+     - POST /api/auth/login/
+     - POST /api/auth/refresh/
+     - GET /api/auth/me/
+     - POST /api/auth/set-custom-claims/
+     - POST /api/auth/logout/
+     - POST /api/auth/anonymous-signin/
+
+7. MIGRATIONS
+   ✓ Created core/migrations/0001_initial.py
+     - Defines Project, ProjectMembership, UserProfile, RefreshTokenBlacklist models
+     - Creates indexes for performance
+   ✓ Created core/migrations/__init__.py
+   ✓ Created api/migrations/__init__.py
+
+8. TESTS (tests/test_auth.py)
+   ✓ test_register_success
+   ✓ test_register_password_mismatch
+   ✓ test_register_duplicate_email
+   ✓ test_login_success
+   ✓ test_login_invalid_password
+   ✓ test_login_nonexistent_user
+   ✓ test_anonymous_signin
+   ✓ test_me_authenticated
+   ✓ test_me_unauthenticated
+   ✓ test_refresh_token
+   ✓ test_logout_blacklists_token
+   ✓ test_set_custom_claims_admin
+   ✓ test_set_custom_claims_non_admin
+   ✓ test_custom_claims_in_token
+   ✓ test_register_password_validation
+
+9. TEST FIXTURES (tests/conftest.py)
+   ✓ api_client — unauthenticated API client
+   ✓ test_user — regular user for testing
+   ✓ admin_user — admin/staff user for testing
+   ✓ test_project — test project with membership
+   ✓ authenticated_client — client authenticated as test_user
+   ✓ admin_client — client authenticated as admin_user
+
+10. DOCUMENTATION
+    ✓ AUTH_SERVICE_IMPLEMENTATION.md (comprehensive guide)
+       - Architecture diagram
+       - Database models
+       - All 7 API endpoints with examples
+       - JWT token structure
+       - Custom claims explanation
+       - Configuration reference
+       - Testing guide
+       - Security considerations
+       - Comparison with Firebase
+       - Usage examples with curl
+       - Migration guide
+
+================================================================================
+KEY FEATURES
+
+1. Email/Password Authentication
+   - Register with email + password
+   - Login returns JWT pair (access + refresh)
+   - Passwords validated against Django's password validators
+
+2. JWT Tokens
+   - Access tokens: 15 minutes (short-lived, low risk)
+   - Refresh tokens: 7 days (long-lived)
+   - Algorithm: HS256 with Django SECRET_KEY
+   - Token rotation: Old refresh token blacklisted on renewal
+   - Custom claims embedded in access token payload
+
+3. Custom Claims
+   - Store user roles, permissions, metadata in token
+   - Max 1000 bytes (Firebase-compatible)
+   - Set via /api/auth/set-custom-claims/ (admin only)
+   - Appear in JWT immediately (no propagation delay)
+   - Example: { "admin": true, "role": "editor", "tier": "premium" }
+
+4. Token Blacklist / Logout
+   - Logout blacklists refresh token
+   - Prevents token reuse after logout
+   - Stored in RefreshTokenBlacklist model
+   - CustomJWTAuthentication checks blacklist on every request
+
+5. Anonymous Sign-in
+   - Create temporary user without email/password
+   - Useful for guest sessions before account creation
+   - Can be upgraded to full account in Phase 2
+
+6. User Profiles
+   - Email verification status
+   - Sign-in provider (password, google, github, anonymous)
+   - Phone number + verification
+   - Avatar URL, bio
+   - Custom claims (JSON)
+
+7. Multi-Tenant Support
+   - Project-based isolation
+   - project_id passed in JWT claims during login
+   - Used by MultiTenantMiddleware for context/RLS
+
+================================================================================
+TESTING THE IMPLEMENTATION
+
+Run all tests:
+    pytest tests/test_auth.py -v
+
+Run specific test:
+    pytest tests/test_auth.py::TestAuthViewSet::test_register_success -v
+
+With coverage:
+    pytest tests/test_auth.py --cov=api --cov=core --cov-report=html
+
+Command-line testing (after server running on :8000):
+
+1. Register:
+curl -X POST http://localhost:8000/api/auth/register/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email":"test@test.com",
+    "password":"SecurePass123!",
+    "password_confirm":"SecurePass123!"
+  }'
+
+2. Login:
+curl -X POST http://localhost:8000/api/auth/login/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email":"test@test.com",
+    "password":"SecurePass123!"
+  }'
+
+3. Get profile with token:
+curl -X GET http://localhost:8000/api/auth/me/ \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+
+================================================================================
+NEXT STEPS (PHASE 2+)
+
+- Email verification workflows
+- Password reset / "forgot password"
+- OAuth2 / Social login (Google, GitHub)
+- Multi-factor authentication (MFA)
+- Account linking (upgrade anonymous → email)
+- RS256 signing with key rotation
+- Rate limiting on auth endpoints
+- Session management API
+- Security events log
+
+================================================================================
