@@ -60,6 +60,9 @@ INSTALLED_APPS = [
     'abtesting.apps.ABTestingConfig',
     'ai.apps.AIConfig',
     'rag.apps.RAGConfig',
+    'webhooks.apps.WebhooksConfig',
+    'billing.apps.BillingConfig',
+    'remoteconfig.apps.RemoteConfigApp',
 ]
 
 MIDDLEWARE = [

@@ -65,3 +65,27 @@ class ConversionEventSerializer(serializers.ModelSerializer):
         if not value or not value.strip():
             raise serializers.ValidationError('event_name must not be blank.')
         return value.strip()
+
+
+# ── Phase 6 SDK serializers ──────────────────────────────────────────────────
+
+from django.utils import timezone as tz
+from rest_framework import serializers as _ser
+from .models import AnalyticsEvent
+
+
+class AnalyticsEventSerializer(_ser.ModelSerializer):
+    timestamp = _ser.DateTimeField(default=tz.now)
+
+    class Meta:
+        model = AnalyticsEvent
+        fields = ['id', 'event_name', 'properties', 'anonymous_id', 'session_id', 'platform', 'app_version', 'timestamp', 'received_at']
+        read_only_fields = ['id', 'received_at']
+
+
+class BatchEventSerializer(_ser.Serializer):
+    events = _ser.ListField(
+        child=AnalyticsEventSerializer(),
+        min_length=1,
+        max_length=500,
+    )

@@ -1,9 +1,11 @@
 """
 Analytics models: client events, user properties, and conversion event configuration.
 Mirrors Firebase Analytics logEvent / setUserProperty APIs.
+Phase 6 adds AnalyticsEvent for SDK-style event tracking (batch ingest, summary queries).
 """
 
 import uuid
+from django.conf import settings
 from django.db import models
 from core.models import Project
 
@@ -139,3 +141,37 @@ class ConversionEvent(models.Model):
 
     def __str__(self):
         return f"conversion:{self.event_name} ({self.project.slug})"
+
+
+class AnalyticsEvent(models.Model):
+    """
+    SDK-style event tracking (Phase 6). Batch ingest, summary queries, platform analytics.
+    Distinct from the Phase 4 Event model — lighter weight, user-FK based, no geo fields.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.ForeignKey(
+        'core.Project', on_delete=models.CASCADE, related_name='sdk_analytics_events',
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='sdk_analytics_events',
+    )
+    anonymous_id = models.CharField(max_length=256, blank=True)
+    event_name = models.CharField(max_length=256, db_index=True)
+    properties = models.JSONField(default=dict)
+    session_id = models.CharField(max_length=256, blank=True)
+    platform = models.CharField(max_length=64, blank=True)
+    app_version = models.CharField(max_length=64, blank=True)
+    timestamp = models.DateTimeField(db_index=True)
+    received_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['project', 'event_name', 'timestamp']),
+            models.Index(fields=['project', 'user', 'timestamp']),
+            models.Index(fields=['project', 'timestamp']),
+        ]
+        ordering = ['-timestamp']
+
+    def __str__(self):
+        return f"{self.event_name} @ {self.timestamp}"

@@ -375,3 +375,98 @@ class AnalyticsQueryView(APIView):
             'end_date': end_date,
             'results': data,
         })
+
+
+# ── Phase 6 SDK views ────────────────────────────────────────────────────────
+
+import logging as _logging
+from datetime import timedelta as _td
+
+from django.db.models import Count as _Count
+from django.db.models.functions import TruncDate as _TruncDate
+from rest_framework.views import APIView as _APIView
+
+from .models import AnalyticsEvent as _AnalyticsEvent
+from .serializers import AnalyticsEventSerializer as _EvSer, BatchEventSerializer as _BatchSer
+
+_log6 = _logging.getLogger(__name__)
+
+
+class TrackEventView(_APIView):
+    """POST /api/projects/{id}/analytics/track/ — ingest single SDK event."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, project_id=None):
+        project, _ = _get_project_and_membership(request, project_id)
+        ser = _EvSer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        event = ser.save(project=project, user=request.user)
+        return Response({'id': str(event.id)}, status=201)
+
+
+class BatchTrackView(_APIView):
+    """POST /api/projects/{id}/analytics/batch/ — ingest up to 500 events."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, project_id=None):
+        project, _ = _get_project_and_membership(request, project_id)
+        ser = _BatchSer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        created = []
+        for ev in ser.validated_data['events']:
+            ev.pop('id', None)
+            ev.pop('received_at', None)
+            obj = _AnalyticsEvent.objects.create(project=project, user=request.user, **ev)
+            created.append(str(obj.id))
+        return Response({'created': len(created), 'ids': created}, status=201)
+
+
+class SDKEventSummaryView(_APIView):
+    """GET /api/projects/{id}/analytics/sdk-summary/ — event counts over time."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, project_id=None):
+        project, _ = _get_project_and_membership(request, project_id)
+        days = max(1, min(int(request.query_params.get('days', 7)), 90))
+        since = timezone.now() - _td(days=days)
+        by_name = (
+            _AnalyticsEvent.objects
+            .filter(project=project, timestamp__gte=since)
+            .values('event_name')
+            .annotate(count=_Count('id'))
+            .order_by('-count')[:50]
+        )
+        by_day = (
+            _AnalyticsEvent.objects
+            .filter(project=project, timestamp__gte=since)
+            .annotate(day=_TruncDate('timestamp'))
+            .values('day')
+            .annotate(count=_Count('id'))
+            .order_by('day')
+        )
+        unique_users = (
+            _AnalyticsEvent.objects
+            .filter(project=project, timestamp__gte=since, user__isnull=False)
+            .values('user').distinct().count()
+        )
+        return Response({
+            'period_days': days,
+            'total_events': sum(x['count'] for x in by_name),
+            'unique_users': unique_users,
+            'by_event': list(by_name),
+            'by_day': [{'day': str(x['day']), 'count': x['count']} for x in by_day],
+        })
+
+
+class SDKEventListView(_APIView):
+    """GET /api/projects/{id}/analytics/sdk-events/?event_name=X"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, project_id=None):
+        project, _ = _get_project_and_membership(request, project_id)
+        qs = _AnalyticsEvent.objects.filter(project=project)
+        event_name = request.query_params.get('event_name')
+        if event_name:
+            qs = qs.filter(event_name=event_name)
+        limit = min(int(request.query_params.get('limit', 100)), 500)
+        return Response(_EvSer(qs.order_by('-timestamp')[:limit], many=True).data)

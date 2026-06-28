@@ -7,6 +7,7 @@ from django.contrib import admin
 from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 from enhanced_auth.views import IssueCustomTokenView
+from billing.views import TiersView
 
 urlpatterns = [
     # Django admin
@@ -59,6 +60,18 @@ urlpatterns = [
 
     # RAG / Vector Search API
     path('api/projects/<uuid:project_id>/rag/', include('rag.urls', namespace='rag')),
+
+    # Webhooks API
+    path('api/projects/<uuid:project_id>/webhooks/', include('webhooks.urls', namespace='webhooks')),
+
+    # Billing & Quota API (project-scoped)
+    path('api/projects/<uuid:project_id>/billing/', include('billing.urls', namespace='billing')),
+
+    # Billing tiers (public, no project scope)
+    path('api/billing/tiers/', TiersView.as_view(), name='billing-tiers'),
+
+    # Remote Config Parameters API (simple key/value store)
+    path('api/projects/<uuid:project_id>/remoteconfig/', include('remoteconfig.urls', namespace='remoteconfig_params')),
 ]
 
 if settings.DEBUG:

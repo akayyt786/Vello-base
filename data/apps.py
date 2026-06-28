@@ -5,3 +5,6 @@ class DataConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'data'
     verbose_name = 'Data API (Firestore)'
+
+    def ready(self):
+        import data.signals  # noqa: F401
