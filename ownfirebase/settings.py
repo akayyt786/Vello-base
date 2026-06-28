@@ -51,6 +51,8 @@ INSTALLED_APPS = [
     'analytics',
     'crashlytics',
     'config.apps.ConfigAppConfig',
+    'enhanced_auth.apps.EnhancedAuthConfig',
+    'app_check.apps.AppCheckConfig',
 ]
 
 MIDDLEWARE = [
@@ -301,3 +303,11 @@ APNS_KEY_ID = os.environ.get('APNS_KEY_ID', '')
 APNS_TEAM_ID = os.environ.get('APNS_TEAM_ID', '')
 APNS_BUNDLE_ID = os.environ.get('APNS_BUNDLE_ID', '')
 PUSH_QUEUE_KEY = 'ownfb:push:queue'
+
+# Enhanced Auth settings
+TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', '')
+TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', '')
+TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER', '')
+MAGIC_LINK_BASE_URL = os.environ.get('MAGIC_LINK_BASE_URL', 'http://localhost:8000')
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@ownfirebase.local')
+EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')

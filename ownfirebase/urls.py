@@ -5,6 +5,7 @@ URL configuration for Own Firebase (ownfirebase) project.
 from django.contrib import admin
 from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
+from enhanced_auth.views import IssueCustomTokenView
 
 urlpatterns = [
     # Django admin
@@ -41,4 +42,13 @@ urlpatterns = [
 
     # Crashlytics + Performance Monitoring API
     path('api/projects/<uuid:project_id>/crashlytics/', include('crashlytics.urls', namespace='crashlytics')),
+
+    # Enhanced Auth (user-level: phone, MFA, magic-link)
+    path('api/v1/auth/', include('enhanced_auth.urls', namespace='enhanced_auth')),
+
+    # Enhanced Auth (project-scoped: custom token issuance)
+    path('api/projects/<uuid:project_id>/auth/custom-token/', IssueCustomTokenView.as_view(), name='issue-custom-token'),
+
+    # App Check API
+    path('api/projects/<uuid:project_id>/app-check/', include('app_check.urls', namespace='app_check')),
 ]

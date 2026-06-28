@@ -1,0 +1,458 @@
+"""
+Enhanced Auth API views.
+
+Phone OTP:
+  POST /api/v1/auth/phone/send-otp/        — send OTP to phone
+  POST /api/v1/auth/phone/verify-otp/      — verify OTP, return JWT
+
+MFA:
+  GET  /api/v1/auth/mfa/devices/           — list user MFA devices
+  POST /api/v1/auth/mfa/enroll/totp/       — start TOTP enrollment (returns secret + URI)
+  POST /api/v1/auth/mfa/confirm/totp/      — confirm TOTP (activate device)
+  POST /api/v1/auth/mfa/verify/totp/       — verify TOTP code (returns JWT)
+  POST /api/v1/auth/mfa/enroll/sms/        — enroll SMS MFA device
+  POST /api/v1/auth/mfa/confirm/sms/       — confirm SMS device with code
+  POST /api/v1/auth/mfa/verify/sms/        — send + verify SMS code (returns JWT)
+  DELETE /api/v1/auth/mfa/devices/{id}/    — delete MFA device
+
+Magic Link:
+  POST /api/v1/auth/magic-link/send/       — email a login link
+  GET  /api/v1/auth/magic-link/verify/     — verify token, return JWT
+
+Custom Tokens (project-scoped):
+  POST /api/projects/{project_id}/auth/custom-token/  — issue custom JWT
+"""
+
+import logging
+
+from django.contrib.auth import get_user_model
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from rest_framework import status
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from rest_framework_simplejwt.tokens import RefreshToken
+
+from core.models import Project, ProjectMembership
+from .models import PhoneVerification, MFADevice, MFASMSCode, MagicLink, CustomToken
+from .serializers import (
+    SendOTPSerializer, VerifyOTPSerializer,
+    EnrollTOTPSerializer, ConfirmTOTPSerializer, VerifyTOTPSerializer,
+    EnrollSMSSerializer, ConfirmSMSSerializer, VerifySMSSerializer,
+    MFADeviceSerializer, SendMagicLinkSerializer, IssueCustomTokenSerializer,
+)
+from .services import (
+    generate_otp, send_sms, send_magic_link_email, hash_token,
+    get_otp_expiry, get_magic_link_expiry, get_custom_token_expiry,
+)
+
+logger = logging.getLogger(__name__)
+User = get_user_model()
+
+MAX_OTP_ATTEMPTS = 5
+
+
+def _jwt_for_user(user):
+    refresh = RefreshToken.for_user(user)
+    return {
+        'access': str(refresh.access_token),
+        'refresh': str(refresh),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Phone OTP
+# ---------------------------------------------------------------------------
+
+class SendOTPView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        ser = SendOTPSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        phone = ser.validated_data['phone_number']
+
+        otp = generate_otp()
+        PhoneVerification.objects.create(
+            user=request.user,
+            phone_number=phone,
+            otp_code=otp,
+            expires_at=get_otp_expiry(),
+        )
+        try:
+            send_sms(phone, f"Your OwnFirebase OTP is: {otp}")
+        except Exception:
+            return Response({'error': 'Failed to send SMS.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        return Response({'detail': 'OTP sent.', 'phone_number': phone}, status=status.HTTP_200_OK)
+
+
+class VerifyOTPView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        ser = VerifyOTPSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        phone = ser.validated_data['phone_number']
+        code = ser.validated_data['otp_code']
+
+        verif = PhoneVerification.objects.filter(
+            user=request.user,
+            phone_number=phone,
+            status=PhoneVerification.STATUS_PENDING,
+        ).order_by('-created_at').first()
+
+        if not verif:
+            return Response({'error': 'No pending OTP for this number.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if verif.is_expired():
+            verif.status = PhoneVerification.STATUS_EXPIRED
+            verif.save(update_fields=['status'])
+            return Response({'error': 'OTP expired.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        verif.attempts += 1
+        if verif.attempts >= MAX_OTP_ATTEMPTS:
+            verif.status = PhoneVerification.STATUS_EXPIRED
+            verif.save(update_fields=['status', 'attempts'])
+            return Response({'error': 'Too many attempts.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+        if verif.otp_code != code:
+            verif.save(update_fields=['attempts'])
+            return Response({'error': 'Invalid OTP.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        verif.status = PhoneVerification.STATUS_VERIFIED
+        verif.save(update_fields=['status', 'attempts'])
+        return Response({'detail': 'Phone verified.', 'phone_number': phone}, status=status.HTTP_200_OK)
+
+
+# ---------------------------------------------------------------------------
+# MFA — TOTP
+# ---------------------------------------------------------------------------
+
+class EnrollTOTPView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        ser = EnrollTOTPSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        try:
+            import pyotp
+        except ImportError:
+            return Response({'error': 'pyotp not installed.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        secret = pyotp.random_base32()
+        device = MFADevice.objects.create(
+            user=request.user,
+            method=MFADevice.METHOD_TOTP,
+            name=ser.validated_data['name'],
+            totp_secret=secret,
+            is_active=False,
+        )
+        totp = pyotp.TOTP(secret)
+        provisioning_uri = totp.provisioning_uri(
+            name=request.user.email,
+            issuer_name='OwnFirebase',
+        )
+        return Response({
+            'device_id': str(device.id),
+            'secret': secret,
+            'provisioning_uri': provisioning_uri,
+        }, status=status.HTTP_201_CREATED)
+
+
+class ConfirmTOTPView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        ser = ConfirmTOTPSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        device = get_object_or_404(
+            MFADevice,
+            id=ser.validated_data['device_id'],
+            user=request.user,
+            method=MFADevice.METHOD_TOTP,
+            is_active=False,
+        )
+
+        try:
+            import pyotp
+        except ImportError:
+            return Response({'error': 'pyotp not installed.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        totp = pyotp.TOTP(device.totp_secret)
+        if not totp.verify(ser.validated_data['totp_code'], valid_window=1):
+            return Response({'error': 'Invalid TOTP code.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        device.is_active = True
+        device.confirmed_at = timezone.now()
+        device.save(update_fields=['is_active', 'confirmed_at'])
+        return Response({'detail': 'TOTP device confirmed.', 'device_id': str(device.id)})
+
+
+class VerifyTOTPView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        ser = VerifyTOTPSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        device = get_object_or_404(
+            MFADevice,
+            id=ser.validated_data['device_id'],
+            user=request.user,
+            method=MFADevice.METHOD_TOTP,
+            is_active=True,
+        )
+
+        try:
+            import pyotp
+        except ImportError:
+            return Response({'error': 'pyotp not installed.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        totp = pyotp.TOTP(device.totp_secret)
+        if not totp.verify(ser.validated_data['totp_code'], valid_window=1):
+            return Response({'error': 'Invalid TOTP code.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(_jwt_for_user(request.user))
+
+
+# ---------------------------------------------------------------------------
+# MFA — SMS
+# ---------------------------------------------------------------------------
+
+class EnrollSMSView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        ser = EnrollSMSSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        device = MFADevice.objects.create(
+            user=request.user,
+            method=MFADevice.METHOD_SMS,
+            name=ser.validated_data['name'],
+            phone_number=ser.validated_data['phone_number'],
+            is_active=False,
+        )
+
+        code = generate_otp()
+        from datetime import timedelta
+        MFASMSCode.objects.create(
+            device=device,
+            code=code,
+            expires_at=timezone.now() + timedelta(minutes=10),
+        )
+        try:
+            send_sms(device.phone_number, f"Your OwnFirebase MFA code: {code}")
+        except Exception:
+            device.delete()
+            return Response({'error': 'Failed to send SMS.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        return Response({'device_id': str(device.id), 'detail': 'Verification code sent.'}, status=status.HTTP_201_CREATED)
+
+
+class ConfirmSMSView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        ser = ConfirmSMSSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        device = get_object_or_404(
+            MFADevice,
+            id=ser.validated_data['device_id'],
+            user=request.user,
+            method=MFADevice.METHOD_SMS,
+            is_active=False,
+        )
+
+        sms_code = device.sms_codes.filter(is_used=False).order_by('-created_at').first()
+        if not sms_code or sms_code.is_expired():
+            return Response({'error': 'Code expired. Re-enroll to get a new code.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if sms_code.code != ser.validated_data['code']:
+            return Response({'error': 'Invalid code.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        sms_code.is_used = True
+        sms_code.save(update_fields=['is_used'])
+        device.is_active = True
+        device.confirmed_at = timezone.now()
+        device.save(update_fields=['is_active', 'confirmed_at'])
+        return Response({'detail': 'SMS MFA device confirmed.', 'device_id': str(device.id)})
+
+
+class VerifySMSView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        ser = VerifySMSSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        device = get_object_or_404(
+            MFADevice,
+            id=ser.validated_data['device_id'],
+            user=request.user,
+            method=MFADevice.METHOD_SMS,
+            is_active=True,
+        )
+
+        # Find unused, unexpired code matching the provided code
+        valid = device.sms_codes.filter(
+            is_used=False,
+            code=ser.validated_data['code'],
+        ).order_by('-created_at').first()
+
+        if not valid or valid.is_expired():
+            return Response({'error': 'Invalid or expired code.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        valid.is_used = True
+        valid.save(update_fields=['is_used'])
+        return Response(_jwt_for_user(request.user))
+
+
+class SendSMSCodeView(APIView):
+    """Send a new SMS code to an active SMS MFA device."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, device_id):
+        device = get_object_or_404(
+            MFADevice,
+            id=device_id,
+            user=request.user,
+            method=MFADevice.METHOD_SMS,
+            is_active=True,
+        )
+        from datetime import timedelta
+        code = generate_otp()
+        MFASMSCode.objects.create(
+            device=device,
+            code=code,
+            expires_at=timezone.now() + timedelta(minutes=10),
+        )
+        try:
+            send_sms(device.phone_number, f"Your OwnFirebase MFA code: {code}")
+        except Exception:
+            return Response({'error': 'Failed to send SMS.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({'detail': 'Code sent.'})
+
+
+class MFADeviceListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        devices = MFADevice.objects.filter(user=request.user, is_active=True)
+        return Response(MFADeviceSerializer(devices, many=True).data)
+
+
+class MFADeviceDeleteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, device_id):
+        device = get_object_or_404(MFADevice, id=device_id, user=request.user)
+        device.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# Magic Link (Passwordless Email)
+# ---------------------------------------------------------------------------
+
+class SendMagicLinkView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        ser = SendMagicLinkSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        email = ser.validated_data['email']
+        redirect_url = ser.validated_data.get('redirect_url', '')
+
+        try:
+            user = User.objects.get(email__iexact=email)
+        except User.DoesNotExist:
+            # Don't reveal if email exists
+            return Response({'detail': 'If that email is registered, a login link has been sent.'})
+
+        link = MagicLink.objects.create(
+            user=user,
+            redirect_url=redirect_url,
+            expires_at=get_magic_link_expiry(),
+        )
+        try:
+            send_magic_link_email(user, str(link.token), redirect_url)
+        except Exception:
+            link.delete()
+            return Response({'error': 'Failed to send email.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        return Response({'detail': 'If that email is registered, a login link has been sent.'})
+
+
+class VerifyMagicLinkView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        token = request.query_params.get('token')
+        if not token:
+            return Response({'error': 'token is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        link = get_object_or_404(MagicLink, token=token)
+
+        if link.is_used:
+            return Response({'error': 'Link already used.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if link.is_expired():
+            return Response({'error': 'Link expired.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        link.is_used = True
+        link.save(update_fields=['is_used'])
+
+        return Response({
+            'detail': 'Login successful.',
+            **_jwt_for_user(link.user),
+        })
+
+
+# ---------------------------------------------------------------------------
+# Custom Tokens (project-scoped)
+# ---------------------------------------------------------------------------
+
+class IssueCustomTokenView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, project_id):
+        project = get_object_or_404(Project, id=project_id, is_active=True)
+        membership = get_object_or_404(ProjectMembership, project=project, user=request.user)
+        if membership.role not in ('owner', 'editor'):
+            return Response({'error': 'Editor role required.'}, status=status.HTTP_403_FORBIDDEN)
+
+        ser = IssueCustomTokenSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        import jwt
+        import uuid as _uuid
+        from django.conf import settings as _settings
+
+        token_id = str(_uuid.uuid4())
+        payload = {
+            'jti': token_id,
+            'project_id': str(project.id),
+            'uid': ser.validated_data['uid'],
+            'claims': ser.validated_data['claims'],
+            'exp': get_custom_token_expiry().timestamp(),
+        }
+        secret = getattr(_settings, 'JWT_SIGNING_KEY', _settings.SECRET_KEY)
+        token = jwt.encode(payload, secret, algorithm='HS256')
+        token_hash = hash_token(token)
+
+        CustomToken.objects.create(
+            project=project,
+            issued_by=request.user,
+            uid=ser.validated_data['uid'],
+            claims=ser.validated_data['claims'],
+            token_hash=token_hash,
+            expires_at=get_custom_token_expiry(),
+        )
+
+        return Response({'token': token, 'expires_at': get_custom_token_expiry().isoformat()}, status=status.HTTP_201_CREATED)
