@@ -1,0 +1,14 @@
+{
+  "_comment": "Add this to your Claude Desktop claude_desktop_config.json under mcpServers",
+  "mcpServers": {
+    "ownfirebase": {
+      "command": "python",
+      "args": ["-m", "mcp_server.server"],
+      "cwd": "/path/to/your/own-firebase-project",
+      "env": {
+        "OWNFIREBASE_BASE_URL": "http://localhost:8000",
+        "OWNFIREBASE_TOKEN": ""
+      }
+    }
+  }
+}
