@@ -67,3 +67,6 @@ logs/
 # Local development
 *.sql
 !postgres-init.sql
+
+# Rust build artifacts
+rust/target/
