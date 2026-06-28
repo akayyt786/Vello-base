@@ -335,7 +335,7 @@ class DocumentViewSet(viewsets.ViewSet):
             collection_path=collection,
             doc_id=doc_id,
             data=data,
-            __v=0
+            v=0
         )
         document.save()
 
@@ -398,11 +398,11 @@ class DocumentViewSet(viewsets.ViewSet):
         # Optimistic locking: check version if provided
         if '__v' in request.data:
             expected_version = request.data['__v']
-            if document.__v != expected_version:
+            if document.v != expected_version:
                 return Response(
                     {
-                        'detail': f'Document version mismatch. Expected {expected_version}, got {document.__v}',
-                        'current_version': document.__v
+                        'detail': f'Document version mismatch. Expected {expected_version}, got {document.v}',
+                        'current_version': document.v
                     },
                     status=status.HTTP_409_CONFLICT
                 )
@@ -412,7 +412,7 @@ class DocumentViewSet(viewsets.ViewSet):
             document.data.update(request.data['data'])
 
         # Increment version
-        document.__v += 1
+        document.v += 1
         document.save()
 
         serializer = DocumentSerializer(document, context={'request': request})
@@ -441,7 +441,7 @@ class DocumentViewSet(viewsets.ViewSet):
 
         # Replace entire data object
         document.data = request.data.get('data', {})
-        document.__v += 1
+        document.v += 1
         document.save()
 
         serializer = DocumentSerializer(document, context={'request': request})
@@ -577,7 +577,7 @@ class TransactionViewSet(viewsets.ViewSet):
                             project=project,
                             collection_path=collection_path,
                             doc_id=doc_id,
-                            defaults={'data': data, '__v': 0}
+                            defaults={'data': data, 'v': 0}
                         )
                         result['success'] = True
                         result['created'] = created
@@ -591,7 +591,7 @@ class TransactionViewSet(viewsets.ViewSet):
                                 doc_id=doc_id
                             )
                             doc.data.update(data)
-                            doc.__v += 1
+                            doc.v += 1
                             doc.save()
                             result['success'] = True
                         except Document.DoesNotExist:
@@ -600,7 +600,7 @@ class TransactionViewSet(viewsets.ViewSet):
 
                     elif op == 'delete':
                         # Delete
-                        _, deleted_count = Document.objects.filter(
+                        deleted_count, _ = Document.objects.filter(
                             project=project,
                             collection_path=collection_path,
                             doc_id=doc_id

@@ -176,8 +176,11 @@ class RuleEngine:
         path = value.get('path', '')
         op = value.get('op', '==')
 
+        # Strip data. / resource.data. prefix — get_field traverses doc.data directly
+        field_path = path.replace('resource.data.', '').replace('data.', '', 1)
+
         # Get left-hand side
-        lhs = doc.get_field(path)
+        lhs = doc.get_field(field_path)
 
         # Get right-hand side (from rhs_field or rhs)
         if 'rhs_field' in value:
@@ -205,9 +208,12 @@ class RuleEngine:
             return False
 
         field = value.get('field', 'owner_id')
-        owner_id = doc.get_field(field)
+        # owner_id is a direct attribute on DSLDocument, not nested in doc.data
+        owner_id = getattr(doc, field, None)
+        if owner_id is None:
+            owner_id = doc.get_field(field)
 
-        return request.auth_uid == str(owner_id)
+        return owner_id is not None and request.auth_uid == str(owner_id)
 
     def _eval_role_check(self, value: Dict, request: RequestContext) -> bool:
         """
@@ -249,8 +255,21 @@ class RuleEngine:
                 return doc.get_field(path)
         return None
 
+    @staticmethod
+    def _coerce(value: Any) -> Any:
+        """Normalize boolean strings so True == 'true' holds."""
+        if isinstance(value, str):
+            if value.lower() == 'true':
+                return True
+            if value.lower() == 'false':
+                return False
+        return value
+
     def _compare(self, lhs: Any, op: str, rhs: Any) -> bool:
         """Compare two values."""
+        if op in ('==', '!='):
+            lhs = self._coerce(lhs)
+            rhs = self._coerce(rhs)
         if op == '==':
             return lhs == rhs
         elif op == '!=':
@@ -354,13 +373,13 @@ class DSLParser:
         """Parse a single expression."""
         expr = expr.strip()
 
-        # Check for auth conditions
+        # Route by LHS: data.* expressions are field checks even when request.auth appears in RHS
+        if expr.startswith('data.') or expr.startswith('resource.data.'):
+            return self._parse_field_expr(expr)
+
+        # Auth conditions (LHS is request.auth)
         if 'request.auth' in expr:
             return self._parse_auth_expr(expr)
-
-        # Check for field conditions
-        if 'data.' in expr or 'resource.data.' in expr:
-            return self._parse_field_expr(expr)
 
         return None
 

@@ -155,11 +155,14 @@ class CustomClaimsSerializer(serializers.Serializer):
 
 class MeSerializer(serializers.Serializer):
     """Response serializer for /api/auth/me/ endpoint."""
-    user = UserSerializer(read_only=True)
+    user = serializers.SerializerMethodField()
     profile = UserProfileSerializer(read_only=True)
     email_verified = serializers.SerializerMethodField()
     sign_in_provider = serializers.SerializerMethodField()
     custom_claims = serializers.SerializerMethodField()
+
+    def get_user(self, obj):
+        return UserSerializer(obj).data
 
     def get_email_verified(self, obj):
         return obj.profile.email_verified if hasattr(obj, 'profile') else False

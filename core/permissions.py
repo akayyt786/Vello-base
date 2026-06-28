@@ -2,8 +2,9 @@
 Custom permission classes for multi-tenant + project-based access control.
 """
 
+from django.http import Http404
 from rest_framework.permissions import BasePermission, SAFE_METHODS
-from core.models import ProjectMembership
+from core.models import Project, ProjectMembership
 
 
 class IsProjectMember(BasePermission):
@@ -25,6 +26,10 @@ class IsProjectMember(BasePermission):
 
         if not project_id:
             return False
+
+        # Return 404 if project doesn't exist rather than 403
+        if not Project.objects.filter(id=project_id).exists():
+            raise Http404
 
         # Check membership
         return ProjectMembership.objects.filter(

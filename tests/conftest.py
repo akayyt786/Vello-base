@@ -4,10 +4,33 @@ Pytest configuration and fixtures.
 
 import pytest
 from django.contrib.auth.models import User
+from django.test import override_settings
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 from core.models import Project, ProjectMembership, UserProfile
 from data.models import Collection, Document
+
+# Override CHANNEL_LAYERS and CACHES for the entire test session to avoid
+# needing a real Redis server during tests.
+TEST_CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+    },
+}
+
+TEST_CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+    }
+}
+
+def pytest_configure(config):
+    """Apply in-memory backends before Django settings are locked in."""
+    from django.conf import settings
+    if not settings.configured:
+        return
+    settings.CHANNEL_LAYERS = TEST_CHANNEL_LAYERS
+    settings.CACHES = TEST_CACHES
 
 
 @pytest.fixture

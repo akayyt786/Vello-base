@@ -23,6 +23,27 @@ services:
       timeout: 5s
       retries: 5
 
+  # MinIO: S3-compatible object storage (Firebase Storage equivalent)
+  minio:
+    image: minio/minio:latest
+    container_name: ownfirebase-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${AWS_ACCESS_KEY_ID:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - ownfirebase
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # Redis: channel layer, cache, Celery broker, presence
   redis:
     image: redis:7-alpine
@@ -193,3 +214,4 @@ networks:
 volumes:
   postgres_data:
   redis_data:
+  minio_data:

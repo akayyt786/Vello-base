@@ -56,15 +56,18 @@ class DocumentSerializer(serializers.ModelSerializer):
         "__v": 1
     }
     """
-    __v = serializers.IntegerField(source='_Document__v', read_only=True)
-
     class Meta:
         model = Document
         fields = [
             'id', 'collection_path', 'doc_id', 'data',
-            'created_at', 'updated_at', '__v'
+            'created_at', 'updated_at', 'v'
         ]
-        read_only_fields = ['id', 'project', 'created_at', 'updated_at', '__v']
+        read_only_fields = ['id', 'project', 'created_at', 'updated_at', 'v']
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        ret['__v'] = ret.pop('v', 0)
+        return ret
 
     def create(self, validated_data):
         """Create a new document with project from context."""
@@ -75,7 +78,7 @@ class DocumentSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         """Update document and increment version counter."""
-        instance.__v += 1
+        instance.v += 1
         return super().update(instance, validated_data)
 
 

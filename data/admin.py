@@ -70,7 +70,7 @@ class DocumentAdmin(admin.ModelAdmin):
             'classes': ['collapse']
         }),
         ('Versioning', {
-            'fields': ['__v'],
+            'fields': ['v'],
         }),
         ('Audit', {
             'fields': ['created_by', 'created_at', 'updated_by', 'updated_at'],
@@ -90,7 +90,7 @@ class DocumentAdmin(admin.ModelAdmin):
         """Display version counter."""
         return format_html(
             '<strong>v{}</strong>',
-            obj.__v
+            obj.v
         )
     version_display.short_description = 'Version'
 

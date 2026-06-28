@@ -5,6 +5,7 @@ Tests for project endpoints.
 import pytest
 from django.urls import reverse
 from rest_framework import status
+from django.contrib.auth.models import User
 from core.models import Project, ProjectMembership
 
 
@@ -17,8 +18,8 @@ class TestProjectViewSet:
         url = reverse('project-list')
         response = authenticated_client.get(url)
         assert response.status_code == status.HTTP_200_OK
-        assert len(response.data) == 1
-        assert response.data[0]['id'] == str(test_project.id)
+        assert len(response.data['results']) == 1
+        assert response.data['results'][0]['id'] == str(test_project.id)
 
     def test_create_project(self, authenticated_client, test_user):
         """Test creating a new project."""
@@ -54,7 +55,7 @@ class TestProjectViewSet:
 
     def test_invite_member(self, authenticated_client, test_project, test_user, db):
         """Test inviting a member to a project."""
-        other_user = db.objects.create_user(
+        other_user = User.objects.create_user(
             username='other@example.com',
             email='other@example.com',
             password='password'
@@ -74,7 +75,7 @@ class TestProjectViewSet:
 
     def test_invite_member_not_owner(self, api_client, test_project, test_user, db):
         """Test that non-owners cannot invite members."""
-        viewer_user = db.objects.create_user(
+        viewer_user = User.objects.create_user(
             username='viewer@example.com',
             email='viewer@example.com',
             password='password'

@@ -164,7 +164,7 @@ class TestDataAPI(APITestCase):
 
         # Verify in DB
         doc.refresh_from_db()
-        assert doc.__v == 1
+        assert doc.v == 1
         assert doc.data['age'] == 31
 
     def test_delete_document(self):
@@ -562,7 +562,7 @@ class TestDataAPI(APITestCase):
             doc_id='alice',
             data={'name': 'Alice', 'age': 30}
         )
-        assert doc.__v == 0
+        assert doc.v == 0
 
         # First update
         url = f'/api/projects/{self.project.id}/collections/users/docs/alice/'
@@ -585,7 +585,7 @@ class TestDataAPI(APITestCase):
 
         # Verify in DB
         doc.refresh_from_db()
-        assert doc.__v == 2
+        assert doc.v == 2
 
     def test_multiple_queries_with_filters_and_ordering(self):
         """Test combining WHERE and ORDER BY filters."""
@@ -663,7 +663,12 @@ class TestDataAPI(APITestCase):
         assert response.status_code == 201
         assert 'created_at' in response.data
         assert 'updated_at' in response.data
-        assert response.data['created_at'] == response.data['updated_at']
+        # created_at and updated_at may differ by microseconds (auto_now vs auto_now_add);
+        # check they're within 1 second of each other
+        from datetime import datetime, timezone
+        created = datetime.fromisoformat(response.data['created_at'].replace('Z', '+00:00'))
+        updated = datetime.fromisoformat(response.data['updated_at'].replace('Z', '+00:00'))
+        assert abs((updated - created).total_seconds()) < 1
 
     def test_get_document_by_id_not_found(self):
         """Test retrieving non-existent document returns 404."""

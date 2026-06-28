@@ -23,4 +23,10 @@ urlpatterns = [
 
     # Data API (Firestore-like)
     path('api/', include('data.urls')),
+
+    # Cloud Storage API
+    path('api/projects/<uuid:project_id>/storage/', include('storage.urls', namespace='storage')),
+
+    # Cloud Functions API
+    path('api/projects/<uuid:project_id>/functions/', include('functions.urls', namespace='functions')),
 ]

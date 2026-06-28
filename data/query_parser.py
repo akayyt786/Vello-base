@@ -192,27 +192,40 @@ class QueryParser:
         return Q(), pivot
 
 
+_ARRAY_OPS = ('array-contains', 'array-contains-any')
+
+
+def _apply_array_filter(documents: list, condition: Dict[str, Any]) -> list:
+    """Filter a list of Document objects for array membership conditions."""
+    field = condition.get('field')
+    op = condition.get('op')
+    value = condition.get('value')
+    if op == 'array-contains':
+        return [doc for doc in documents
+                if isinstance(doc.data.get(field), list) and value in doc.data[field]]
+    if op == 'array-contains-any':
+        values = value if isinstance(value, list) else [value]
+        return [doc for doc in documents
+                if isinstance(doc.data.get(field), list) and any(v in doc.data[field] for v in values)]
+    return documents
+
+
 def apply_filters_to_queryset(queryset, where: List[Dict] = None, order_by: List[Dict] = None,
                               limit: int = None, cursor: str = None) -> Tuple:
     """
-    Apply query parameters to a queryset and return filtered queryset + count.
-
-    Args:
-        queryset: Base Django queryset
-        where: List of WHERE conditions
-        order_by: List of ORDER BY specs
-        limit: Max documents to return
-        cursor: Cursor (doc ID) for pagination
+    Apply query parameters to a queryset and return filtered queryset/list + count.
 
     Returns:
-        Tuple of (filtered queryset, total count, cursor info)
-
-    Raises:
-        ValueError: If query is invalid
+        Tuple of (queryset or list, total count)
     """
-    # Parse WHERE
+    where = where or []
+    # Separate array conditions that need Python-level filtering (SQLite incompatibility)
+    array_conditions = [c for c in where if c.get('op') in _ARRAY_OPS]
+    orm_conditions = [c for c in where if c.get('op') not in _ARRAY_OPS]
+
+    # Parse WHERE (ORM-compatible conditions only)
     try:
-        q_where = QueryParser.parse_where(where or [])
+        q_where = QueryParser.parse_where(orm_conditions)
         queryset = queryset.filter(q_where)
     except ValueError as e:
         raise ValueError(f"Invalid WHERE clause: {e}")
@@ -233,11 +246,19 @@ def apply_filters_to_queryset(queryset, where: List[Dict] = None, order_by: List
         except ValueError as e:
             raise ValueError(f"Invalid cursor: {e}")
 
-    # Count before limiting
-    total_count = queryset.count()
+    if not array_conditions:
+        # Fast path: pure ORM, no Python filtering needed
+        total_count = queryset.count()
+        if limit:
+            queryset = queryset[:limit]
+        return queryset, total_count
 
-    # Apply limit
+    # Slow path: materialize and filter in Python for array-contains conditions
+    documents = list(queryset)
+    for cond in array_conditions:
+        documents = _apply_array_filter(documents, cond)
+
+    total_count = len(documents)
     if limit:
-        queryset = queryset[:limit]
-
-    return queryset, total_count
+        documents = documents[:limit]
+    return documents, total_count

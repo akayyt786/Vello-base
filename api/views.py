@@ -41,6 +41,13 @@ class AuthViewSet(viewsets.ViewSet):
     """
     permission_classes = [AllowAny]
 
+    def get_permissions(self):
+        """Apply action-level permission_classes when manually mapped via as_view()."""
+        handler = getattr(self, self.action, None)
+        if handler and hasattr(handler, 'kwargs') and 'permission_classes' in handler.kwargs:
+            return [perm() for perm in handler.kwargs['permission_classes']]
+        return super().get_permissions()
+
     @action(detail=False, methods=['post'], permission_classes=[AllowAny])
     def register(self, request):
         """
@@ -158,8 +165,9 @@ class AuthViewSet(viewsets.ViewSet):
                 status=status.HTTP_401_UNAUTHORIZED
             )
 
-        # Generate tokens
-        refresh = RefreshToken.for_user(user)
+        # Generate tokens with custom claims
+        from api.serializers import CustomTokenObtainPairSerializer
+        refresh = CustomTokenObtainPairSerializer.get_token(user)
         access_token = refresh.access_token
 
         # Add project_id to token claims if provided
@@ -175,7 +183,7 @@ class AuthViewSet(viewsets.ViewSet):
             'user': UserSerializer(user).data,
         })
 
-    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
+    @action(detail=False, methods=['post'], permission_classes=[AllowAny])
     def refresh(self, request):
         """
         POST /api/auth/refresh/
@@ -192,21 +200,65 @@ class AuthViewSet(viewsets.ViewSet):
                 "refresh": "<new JWT refresh token (if ROTATE_REFRESH_TOKENS=True)>"
             }
 
-        Status: 200 OK on success, 401 Unauthorized if refresh token is invalid/expired
+        Status: 200 OK on success, 401 Unauthorized if refresh token is invalid/expired/blacklisted
         """
-        serializer = RegisterSerializer(data=request.data)
         if 'refresh' not in request.data:
             return Response(
                 {'detail': 'Refresh token is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Use the custom TokenRefreshView's logic
+        # Check if token is blacklisted before attempting refresh
+        try:
+            from rest_framework_simplejwt.tokens import RefreshToken as JWTRefreshToken
+            token = JWTRefreshToken(request.data['refresh'])
+            jti = token.get('jti')
+            if jti and RefreshTokenBlacklist.objects.filter(jti=jti).exists():
+                return Response(
+                    {'detail': 'Token has been revoked'},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+        except Exception:
+            return Response(
+                {'detail': 'Invalid refresh token'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
         from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+        from rest_framework_simplejwt.tokens import AccessToken
+        from django.conf import settings as django_settings
+        import jwt as pyjwt
+
         refresh_serializer = TokenRefreshSerializer(data=request.data)
         refresh_serializer.is_valid(raise_exception=True)
+        data = dict(refresh_serializer.validated_data)
 
-        return Response(refresh_serializer.validated_data)
+        # Re-embed custom claims into the new access token
+        try:
+            decoded = pyjwt.decode(
+                data['access'],
+                django_settings.SIMPLE_JWT['SIGNING_KEY'],
+                algorithms=[django_settings.SIMPLE_JWT['ALGORITHM']],
+            )
+            user_id = decoded.get('user_id')
+            if user_id:
+                from django.contrib.auth.models import User as AuthUser
+                user = AuthUser.objects.select_related('profile').get(id=user_id)
+                profile = user.profile
+                decoded['email'] = user.email
+                decoded['email_verified'] = profile.email_verified
+                decoded['sign_in_provider'] = profile.sign_in_provider
+                if profile.custom_claims:
+                    decoded.update(profile.custom_claims)
+                data['access'] = pyjwt.encode(
+                    decoded,
+                    django_settings.SIMPLE_JWT['SIGNING_KEY'],
+                    algorithm=django_settings.SIMPLE_JWT['ALGORITHM'],
+                )
+        except Exception:
+            pass
+
+        return Response(data)
 
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def me(self, request):
@@ -342,8 +394,8 @@ class AuthViewSet(viewsets.ViewSet):
             exp = refresh.get('exp')
 
             # Convert exp (Unix timestamp) to datetime for expires_at
-            from datetime import datetime
-            expires_at = datetime.fromtimestamp(exp, tz=timezone.utc)
+            from datetime import datetime, timezone as dt_timezone
+            expires_at = datetime.fromtimestamp(exp, tz=dt_timezone.utc)
 
             # Blacklist the token
             RefreshTokenBlacklist.objects.create(

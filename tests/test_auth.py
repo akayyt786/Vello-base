@@ -115,7 +115,7 @@ class TestAuthViewSet:
         assert response.status_code == status.HTTP_200_OK
         assert response.data['user']['email'] == test_user.email
         assert 'profile' in response.data
-        assert response.data['email_verified'] is False
+        assert response.data['email_verified'] is True
         assert response.data['sign_in_provider'] == 'password'
 
     def test_me_unauthenticated(self, api_client):
@@ -204,7 +204,7 @@ class TestAuthViewSet:
                 'tier': 'premium'
             }
         }
-        response = api_client.post(url, data)
+        response = api_client.post(url, data, format='json')
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data['user_id'] == user.id
@@ -232,7 +232,7 @@ class TestAuthViewSet:
             'user_id': test_user.id,
             'claims': {'admin': True}
         }
-        response = api_client.post(url, data)
+        response = api_client.post(url, data, format='json')
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
@@ -254,7 +254,7 @@ class TestAuthViewSet:
             'user_id': test_user.id,
             'claims': {'role': 'editor'}
         }
-        api_client.post(url, data)
+        api_client.post(url, data, format='json')
 
         # Login as test_user and check token
         login_data = {
@@ -274,7 +274,7 @@ class TestAuthViewSet:
         )
         assert decoded.get('role') == 'editor'
         assert decoded.get('email') == test_user.email
-        assert decoded.get('email_verified') is False
+        assert decoded.get('email_verified') is True
 
     def test_register_password_validation(self, api_client):
         """Test registration enforces password requirements."""
@@ -308,7 +308,7 @@ class TestAuthViewSet:
             'user_id': test_user.id,
             'claims': {'role': 'editor', 'tier': 'pro'}
         }
-        api_client.post(claims_url, claims_data)
+        api_client.post(claims_url, claims_data, format='json')
 
         # Login as test_user and get tokens
         api_client.credentials()

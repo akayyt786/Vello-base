@@ -44,6 +44,9 @@ INSTALLED_APPS = [
     'api',
     'data',
     'rules',
+    'realtime',
+    'storage',
+    'functions',
 ]
 
 MIDDLEWARE = [
@@ -170,7 +173,7 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.CursorPagination',
+    'DEFAULT_PAGINATION_CLASS': 'core.pagination.DefaultCursorPagination',
     'PAGE_SIZE': 20,  # Phase 1 MVP: smaller page size for documents
     'DEFAULT_FILTER_BACKENDS': [
         'django_filters.rest_framework.DjangoFilterBackend',
@@ -270,15 +273,16 @@ LOGGING = {
     },
 }
 
-# Storage: MinIO / S3
+# Storage: MinIO / S3 — always configure for presigned URL support in storage app
+AWS_S3_ENDPOINT_URL = os.getenv('AWS_S3_ENDPOINT_URL', 'http://minio:9000')
+AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID', 'minioadmin')
+AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY', 'minioadmin')
+AWS_S3_REGION_NAME = os.getenv('AWS_S3_REGION_NAME', 'us-east-1')
+AWS_S3_USE_SSL = os.getenv('AWS_S3_USE_SSL', 'False') == 'True'
+
 if os.getenv('USE_S3', 'False') == 'True':
     DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
     AWS_STORAGE_BUCKET_NAME = os.getenv('AWS_STORAGE_BUCKET_NAME', 'ownfirebase')
-    AWS_S3_REGION_NAME = os.getenv('AWS_S3_REGION_NAME', 'us-east-1')
-    AWS_S3_ENDPOINT_URL = os.getenv('AWS_S3_ENDPOINT_URL', 'http://minio:9000')
-    AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID', 'minioadmin')
-    AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY', 'minioadmin')
-    AWS_S3_USE_SSL = os.getenv('AWS_S3_USE_SSL', 'False') == 'True'
 
 # Multi-tenant context: set via middleware from JWT
 # Stored in Django thread-local context for RLS enforcement

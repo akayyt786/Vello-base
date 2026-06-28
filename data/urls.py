@@ -31,14 +31,14 @@ urlpatterns = [
         name='collection-list'
     ),
 
-    # Documents
+    # Documents (use <path:collection> to support subcollection paths with slashes)
     path(
-        'projects/<uuid:project_id>/collections/<str:collection>/docs/',
+        'projects/<uuid:project_id>/collections/<path:collection>/docs/',
         doc_list,
         name='document-list'
     ),
     path(
-        'projects/<uuid:project_id>/collections/<str:collection>/docs/<str:doc_id>/',
+        'projects/<uuid:project_id>/collections/<path:collection>/docs/<str:doc_id>/',
         doc_detail,
         name='document-detail'
     ),

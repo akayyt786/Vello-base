@@ -293,10 +293,9 @@ class TestDocumentRulesPermission:
         # Create document owned by user1
         doc = Document.objects.create(
             project=self.project,
-            collection='documents',
-            data={'title': 'My Document'},
-            owner=self.user1,
-            created_by=self.user1,
+            collection_path='documents',
+            doc_id='doc-1',
+            data={'title': 'My Document', 'owner_id': str(self.user1.id)},
         )
 
         # Get token for user1
@@ -314,10 +313,9 @@ class TestDocumentRulesPermission:
         # Create document
         doc = Document.objects.create(
             project=self.project,
-            collection='documents',
-            data={'title': 'My Document'},
-            owner=self.user1,
-            created_by=self.user1,
+            collection_path='documents',
+            doc_id='doc-2',
+            data={'title': 'My Document', 'owner_id': str(self.user1.id)},
         )
 
         # No authentication
@@ -329,10 +327,9 @@ class TestDocumentRulesPermission:
         # Create document owned by user1
         doc = Document.objects.create(
             project=self.project,
-            collection='documents',
-            data={'title': 'User1 Document'},
-            owner=self.user1,
-            created_by=self.user1,
+            collection_path='documents',
+            doc_id='doc-3',
+            data={'title': 'User1 Document', 'owner_id': str(self.user1.id)},
         )
 
         # Get token for user2
