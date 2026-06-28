@@ -48,6 +48,9 @@ INSTALLED_APPS = [
     'storage',
     'functions',
     'push',
+    'analytics',
+    'crashlytics',
+    'config.apps.ConfigAppConfig',
 ]
 
 MIDDLEWARE = [

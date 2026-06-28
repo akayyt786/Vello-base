@@ -32,4 +32,13 @@ urlpatterns = [
 
     # Push Notifications API
     path('api/projects/<uuid:project_id>/push/', include('push.urls', namespace='push')),
+
+    # Analytics API
+    path('api/projects/<uuid:project_id>/analytics/', include('analytics.urls', namespace='analytics')),
+
+    # Remote Config + A/B Testing API
+    path('api/projects/<uuid:project_id>/config/', include('config.urls', namespace='remoteconfig')),
+
+    # Crashlytics + Performance Monitoring API
+    path('api/projects/<uuid:project_id>/crashlytics/', include('crashlytics.urls', namespace='crashlytics')),
 ]
