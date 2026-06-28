@@ -21,6 +21,7 @@ Analytics API views.
 """
 
 import logging
+import re
 
 from django.db import transaction
 from django.shortcuts import get_object_or_404
@@ -42,6 +43,10 @@ class _UpdatedAtCursorPagination(DefaultCursorPagination):
     ordering = '-updated_at'
 
 logger = logging.getLogger(__name__)
+
+# Allowed characters for user property names (mirrors Firebase rules).
+# Must not start with "__" (reserved prefix).
+_PROP_KEY_RE = re.compile(r'^[A-Za-z0-9_]{1,64}$')
 
 
 # ---------------------------------------------------------------------------
@@ -197,14 +202,38 @@ class UserPropertyViewSet(_ProjectScopedMixin, viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Validate all keys and values before writing any of them.
+        for name, value in properties.items():
+            if not isinstance(name, str):
+                return Response(
+                    {'error': f'Property key must be a string, got {type(name).__name__!r}.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not isinstance(value, str):
+                return Response(
+                    {'error': f'Property value for key {name!r} must be a string, got {type(value).__name__!r}.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if name.startswith('__'):
+                return Response(
+                    {'error': f'Property key {name!r} must not start with "__" (reserved prefix).'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not _PROP_KEY_RE.match(name):
+                return Response(
+                    {'error': f'Property key {name!r} contains invalid characters. '
+                               'Only letters, digits, and underscores are allowed.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         updated_count = 0
         with transaction.atomic():
             for name, value in properties.items():
                 UserProperty.objects.update_or_create(
                     project=project,
                     user_id=user_id,
-                    name=str(name)[:64],
-                    defaults={'value': str(value)[:256]},
+                    name=name[:64],
+                    defaults={'value': value[:256]},
                 )
                 updated_count += 1
 

@@ -24,8 +24,11 @@ Custom Tokens (project-scoped):
 """
 
 import logging
+import time
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
+from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
@@ -43,7 +46,7 @@ from .serializers import (
     MFADeviceSerializer, SendMagicLinkSerializer, IssueCustomTokenSerializer,
 )
 from .services import (
-    generate_otp, send_sms, send_magic_link_email, hash_token,
+    generate_otp, send_sms, send_magic_link_email, hash_token, hash_otp,
     get_otp_expiry, get_magic_link_expiry, get_custom_token_expiry,
 )
 
@@ -73,11 +76,20 @@ class SendOTPView(APIView):
         ser.is_valid(raise_exception=True)
         phone = ser.validated_data['phone_number']
 
+        # Rate limit: max 3 OTP SMS per phone number per hour.
+        rate_key = f"sms_otp_rate:{phone}"
+        sms_count = cache.get(rate_key, 0)
+        if sms_count >= 3:
+            return Response(
+                {'error': 'Too many OTP requests. Try again later.'},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
         otp = generate_otp()
         PhoneVerification.objects.create(
             user=request.user,
             phone_number=phone,
-            otp_code=otp,
+            otp_code=hash_otp(otp),  # store hash, never plaintext
             expires_at=get_otp_expiry(),
         )
         try:
@@ -85,6 +97,7 @@ class SendOTPView(APIView):
         except Exception:
             return Response({'error': 'Failed to send SMS.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
+        cache.set(rate_key, sms_count + 1, 3600)
         return Response({'detail': 'OTP sent.', 'phone_number': phone}, status=status.HTTP_200_OK)
 
 
@@ -111,13 +124,15 @@ class VerifyOTPView(APIView):
             verif.save(update_fields=['status'])
             return Response({'error': 'OTP expired.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        verif.attempts += 1
+        # Check attempt limit BEFORE incrementing to prevent off-by-one bypass.
         if verif.attempts >= MAX_OTP_ATTEMPTS:
             verif.status = PhoneVerification.STATUS_EXPIRED
             verif.save(update_fields=['status', 'attempts'])
             return Response({'error': 'Too many attempts.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
-        if verif.otp_code != code:
+        # Compare against stored hash — never compare plaintext OTPs.
+        if verif.otp_code != hash_otp(code):
+            verif.attempts += 1
             verif.save(update_fields=['attempts'])
             return Response({'error': 'Invalid OTP.'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -213,8 +228,23 @@ class VerifyTOTPView(APIView):
             return Response({'error': 'pyotp not installed.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         totp = pyotp.TOTP(device.totp_secret)
-        if not totp.verify(ser.validated_data['totp_code'], valid_window=1):
+        code = ser.validated_data['totp_code']
+        current_counter = int(time.time() // 30)
+
+        if not totp.verify(code, valid_window=1):
             return Response({'error': 'Invalid TOTP code.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Determine the exact counter that matched (window covers current-1..current+1).
+        # Storing matched_counter prevents replaying a look-ahead code in its real window.
+        matched_counter = next(
+            (current_counter + d for d in (-1, 0, 1)
+             if totp.at((current_counter + d) * 30) == code),
+            current_counter,
+        )
+        if device.last_used_counter >= matched_counter:
+            return Response({'error': 'TOTP code already used.'}, status=status.HTTP_400_BAD_REQUEST)
+        device.last_used_counter = matched_counter
+        device.save(update_fields=['last_used_counter'])
 
         return Response(_jwt_for_user(request.user))
 
@@ -242,7 +272,7 @@ class EnrollSMSView(APIView):
         from datetime import timedelta
         MFASMSCode.objects.create(
             device=device,
-            code=code,
+            code=hash_otp(code),  # store hash, never plaintext
             expires_at=timezone.now() + timedelta(minutes=10),
         )
         try:
@@ -273,7 +303,7 @@ class ConfirmSMSView(APIView):
         if not sms_code or sms_code.is_expired():
             return Response({'error': 'Code expired. Re-enroll to get a new code.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        if sms_code.code != ser.validated_data['code']:
+        if sms_code.code != hash_otp(ser.validated_data['code']):
             return Response({'error': 'Invalid code.'}, status=status.HTTP_400_BAD_REQUEST)
 
         sms_code.is_used = True
@@ -299,10 +329,10 @@ class VerifySMSView(APIView):
             is_active=True,
         )
 
-        # Find unused, unexpired code matching the provided code
+        # Find unused code matching the submitted code hash.
         valid = device.sms_codes.filter(
             is_used=False,
-            code=ser.validated_data['code'],
+            code=hash_otp(ser.validated_data['code']),
         ).order_by('-created_at').first()
 
         if not valid or valid.is_expired():
@@ -325,17 +355,29 @@ class SendSMSCodeView(APIView):
             method=MFADevice.METHOD_SMS,
             is_active=True,
         )
+
+        # Rate limit: max 3 MFA SMS per phone number per hour.
+        rate_key = f"sms_mfa_rate:{device.phone_number}"
+        sms_count = cache.get(rate_key, 0)
+        if sms_count >= 3:
+            return Response(
+                {'error': 'Too many SMS code requests. Try again later.'},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
         from datetime import timedelta
         code = generate_otp()
         MFASMSCode.objects.create(
             device=device,
-            code=code,
+            code=hash_otp(code),  # store hash, never plaintext
             expires_at=timezone.now() + timedelta(minutes=10),
         )
         try:
             send_sms(device.phone_number, f"Your OwnFirebase MFA code: {code}")
         except Exception:
             return Response({'error': 'Failed to send SMS.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        cache.set(rate_key, sms_count + 1, 3600)
         return Response({'detail': 'Code sent.'})
 
 
@@ -369,10 +411,20 @@ class SendMagicLinkView(APIView):
         email = ser.validated_data['email']
         redirect_url = ser.validated_data.get('redirect_url', '')
 
+        # Rate limit: max 3 magic links per email per hour.
+        rate_key = f"magic_link_rate:{email.lower()}"
+        ml_count = cache.get(rate_key, 0)
+        if ml_count >= 3:
+            return Response(
+                {'error': 'Too many login link requests. Try again later.'},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
         try:
             user = User.objects.get(email__iexact=email)
         except User.DoesNotExist:
-            # Don't reveal if email exists
+            # Don't reveal if email exists — but still burn a rate-limit slot.
+            cache.set(rate_key, ml_count + 1, 3600)
             return Response({'detail': 'If that email is registered, a login link has been sent.'})
 
         link = MagicLink.objects.create(
@@ -386,6 +438,7 @@ class SendMagicLinkView(APIView):
             link.delete()
             return Response({'error': 'Failed to send email.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
+        cache.set(rate_key, ml_count + 1, 3600)
         return Response({'detail': 'If that email is registered, a login link has been sent.'})
 
 
@@ -397,20 +450,29 @@ class VerifyMagicLinkView(APIView):
         if not token:
             return Response({'error': 'token is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        link = get_object_or_404(MagicLink, token=token)
+        # select_for_update() inside atomic() prevents TOCTOU: two concurrent
+        # requests cannot both read is_used=False and both issue tokens.
+        with transaction.atomic():
+            try:
+                link = MagicLink.objects.select_for_update().get(
+                    token=token, is_used=False,
+                )
+            except MagicLink.DoesNotExist:
+                return Response(
+                    {'error': 'Link not found or already used.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
-        if link.is_used:
-            return Response({'error': 'Link already used.'}, status=status.HTTP_400_BAD_REQUEST)
+            if link.is_expired():
+                return Response({'error': 'Link expired.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        if link.is_expired():
-            return Response({'error': 'Link expired.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        link.is_used = True
-        link.save(update_fields=['is_used'])
+            link.is_used = True
+            link.save(update_fields=['is_used'])
+            user = link.user  # capture while inside atomic block
 
         return Response({
             'detail': 'Login successful.',
-            **_jwt_for_user(link.user),
+            **_jwt_for_user(user),
         })
 
 

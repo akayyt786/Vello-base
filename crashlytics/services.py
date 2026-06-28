@@ -6,6 +6,7 @@ group_crash_report: Deduplicate crash reports into CrashGroups by fingerprint.
 
 import hashlib
 
+from django.db.models import Count
 from django.utils import timezone
 
 from .models import CrashGroup, CrashReport
@@ -51,5 +52,17 @@ def group_crash_report(report: CrashReport) -> CrashGroup:
     # Link the report to its group
     report.group = crash_group
     report.save(update_fields=['group'])
+
+    # Recompute affected_users_count using a DB Count aggregate so it is always
+    # accurate and never computed as a Python-level list count.
+    # This runs after report.group is saved so the current report is included.
+    new_affected = (
+        CrashReport.objects
+        .filter(group=crash_group)
+        .exclude(user_id='')
+        .aggregate(cnt=Count('user_id', distinct=True))['cnt']
+    )
+    CrashGroup.objects.filter(pk=crash_group.pk).update(affected_users_count=new_affected)
+    crash_group.affected_users_count = new_affected
 
     return crash_group

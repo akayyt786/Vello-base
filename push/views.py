@@ -47,7 +47,6 @@ from .serializers import (
     TopicSubscriptionSerializer,
     PushNotificationSerializer,
     NotificationCampaignSerializer,
-    SendNotificationSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -206,6 +205,12 @@ class TopicViewSet(_ProjectScopedMixin, viewsets.ModelViewSet):
             )
         device_token = get_object_or_404(DeviceToken, pk=device_token_id, project=project)
 
+        # Members can only unsubscribe their own tokens; editors/owners may unsubscribe any.
+        if device_token.user_id is not None and device_token.user_id != request.user.id:
+            _, membership = _get_project_and_membership(request, project.id)
+            if membership.role not in ('owner', 'editor'):
+                raise PermissionDenied('Editor role required to unsubscribe another user\'s token.')
+
         deleted, _ = TopicSubscription.objects.filter(
             topic=topic,
             device_token=device_token,
@@ -265,10 +270,15 @@ class NotificationCampaignViewSet(_ProjectScopedMixin, viewsets.ModelViewSet):
         project = self._project(require_editor=True)
         campaign = get_object_or_404(NotificationCampaign, pk=pk, project=project)
 
-        if campaign.status in (NotificationCampaign.STATUS_SENDING, NotificationCampaign.STATUS_SENT):
+        # Atomic compare-and-swap: only one concurrent request wins; the rest get 409.
+        updated = NotificationCampaign.objects.filter(
+            pk=campaign.pk,
+            status__in=[NotificationCampaign.STATUS_DRAFT, NotificationCampaign.STATUS_SCHEDULED],
+        ).update(status=NotificationCampaign.STATUS_SENDING)
+        if not updated:
             return Response(
-                {'error': f'Campaign is already {campaign.status}.'},
-                status=status.HTTP_400_BAD_REQUEST,
+                {'error': 'Campaign already sending or sent.'},
+                status=status.HTTP_409_CONFLICT,
             )
 
         try:

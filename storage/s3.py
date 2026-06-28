@@ -1,17 +1,47 @@
 """
 S3/MinIO client factory and presigned URL helpers.
 Works with any S3-compatible backend (MinIO, AWS S3, DigitalOcean Spaces).
+
+SSRF note: AWS_S3_ENDPOINT_URL must come from server-side settings only — never
+from user-controlled request data.  All user-supplied keys (file paths) are
+validated by validate_storage_key() before being passed to boto3 to prevent
+path traversal attacks (e.g. "../../secret") that could escape the intended
+bucket namespace.
 """
 
 import logging
+import posixpath
 import boto3
 from botocore.exceptions import ClientError
 from django.conf import settings
+from rest_framework.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
 
 PRESIGNED_UPLOAD_TTL = 3600
 PRESIGNED_DOWNLOAD_TTL = 900
+
+
+def validate_storage_key(key: str) -> str:
+    """
+    Validate and normalise a user-supplied S3 object key.
+
+    Raises ValidationError for:
+    - Empty or blank keys
+    - Keys that start with '/' (absolute paths)
+    - Keys containing '..' segments (directory traversal)
+    - Keys containing null bytes or newline characters
+    """
+    if not key or not key.strip():
+        raise ValidationError('Storage path must not be empty.')
+    if '\x00' in key or '\n' in key or '\r' in key:
+        raise ValidationError('Storage path contains invalid characters.')
+    normalized = posixpath.normpath(key)
+    if normalized.startswith('/'):
+        raise ValidationError('Storage path must not be an absolute path.')
+    if normalized.startswith('..') or '/../' in normalized or normalized == '..':
+        raise ValidationError('Storage path must not contain directory traversal sequences.')
+    return key
 
 
 def get_s3_client():
@@ -42,6 +72,7 @@ def ensure_bucket(bucket_name):
 
 
 def presigned_upload_url(bucket, key, content_type):
+    key = validate_storage_key(key)
     client = get_s3_client()
     url = client.generate_presigned_url(
         'put_object',
@@ -56,6 +87,7 @@ def presigned_upload_url(bucket, key, content_type):
 
 
 def presigned_download_url(bucket, key):
+    key = validate_storage_key(key)
     client = get_s3_client()
     return client.generate_presigned_url(
         'get_object',
@@ -65,6 +97,7 @@ def presigned_download_url(bucket, key):
 
 
 def get_object_metadata(bucket, key):
+    key = validate_storage_key(key)
     client = get_s3_client()
     try:
         resp = client.head_object(Bucket=bucket, Key=key)
@@ -78,6 +111,7 @@ def get_object_metadata(bucket, key):
 
 
 def delete_object(bucket, key):
+    key = validate_storage_key(key)
     client = get_s3_client()
     try:
         client.delete_object(Bucket=bucket, Key=key)

@@ -16,7 +16,7 @@ class SendOTPSerializer(serializers.Serializer):
 
 class VerifyOTPSerializer(serializers.Serializer):
     phone_number = serializers.CharField(max_length=20)
-    otp_code = serializers.CharField(min_length=6, max_length=6)
+    otp_code = serializers.CharField(min_length=6, max_length=6, write_only=True)
 
 
 class EnrollTOTPSerializer(serializers.Serializer):
@@ -25,12 +25,12 @@ class EnrollTOTPSerializer(serializers.Serializer):
 
 class ConfirmTOTPSerializer(serializers.Serializer):
     device_id = serializers.UUIDField()
-    totp_code = serializers.CharField(min_length=6, max_length=6)
+    totp_code = serializers.CharField(min_length=6, max_length=6, write_only=True)
 
 
 class VerifyTOTPSerializer(serializers.Serializer):
     device_id = serializers.UUIDField()
-    totp_code = serializers.CharField(min_length=6, max_length=6)
+    totp_code = serializers.CharField(min_length=6, max_length=6, write_only=True)
 
 
 class EnrollSMSSerializer(serializers.Serializer):
@@ -46,12 +46,12 @@ class EnrollSMSSerializer(serializers.Serializer):
 
 class ConfirmSMSSerializer(serializers.Serializer):
     device_id = serializers.UUIDField()
-    code = serializers.CharField(min_length=6, max_length=6)
+    code = serializers.CharField(min_length=6, max_length=6, write_only=True)
 
 
 class VerifySMSSerializer(serializers.Serializer):
     device_id = serializers.UUIDField()
-    code = serializers.CharField(min_length=6, max_length=6)
+    code = serializers.CharField(min_length=6, max_length=6, write_only=True)
 
 
 class MFADeviceSerializer(serializers.ModelSerializer):

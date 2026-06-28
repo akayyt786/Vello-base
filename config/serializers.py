@@ -9,7 +9,7 @@ class RemoteConfigSerializer(serializers.ModelSerializer):
         model = RemoteConfig
         fields = [
             'id', 'project', 'key', 'value_type', 'default_value',
-            'description', 'is_active', 'created_at', 'updated_at',
+            'description', 'is_active', 'is_secret', 'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'project', 'created_at', 'updated_at']
 
@@ -17,6 +17,17 @@ class RemoteConfigSerializer(serializers.ModelSerializer):
         if not value or not value.strip():
             raise serializers.ValidationError('Config key must not be blank.')
         return value.strip()
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # Mask the secret value in list responses; expose it only on explicit retrieve.
+        if instance.is_secret:
+            view = self.context.get('view')
+            action = getattr(view, 'action', None)
+            if action == 'list':
+                raw = data.get('default_value', '')
+                data['default_value'] = (raw[:4] + '****') if len(raw) > 4 else '****'
+        return data
 
 
 class ConfigConditionSerializer(serializers.ModelSerializer):

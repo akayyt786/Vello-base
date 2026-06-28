@@ -1,7 +1,13 @@
 """Serializers for the Analytics API."""
 
+import re
+
 from rest_framework import serializers
 from .models import Event, UserProperty, ConversionEvent
+
+# Allowed characters for user property names: letters, digits, underscores only.
+# Must not start with "__" (reserved prefix).
+_PROP_KEY_RE = re.compile(r'^[A-Za-z0-9_]{1,64}$')
 
 
 class EventSerializer(serializers.ModelSerializer):
@@ -37,7 +43,16 @@ class UserPropertySerializer(serializers.ModelSerializer):
     def validate_name(self, value):
         if not value or not value.strip():
             raise serializers.ValidationError('Property name must not be blank.')
-        return value.strip()
+        value = value.strip()
+        if value.startswith('__'):
+            raise serializers.ValidationError(
+                'Property name must not start with "__" (reserved prefix).'
+            )
+        if not _PROP_KEY_RE.match(value):
+            raise serializers.ValidationError(
+                'Property name may only contain letters, digits, and underscores.'
+            )
+        return value
 
 
 class ConversionEventSerializer(serializers.ModelSerializer):

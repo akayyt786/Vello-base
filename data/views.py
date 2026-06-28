@@ -4,6 +4,7 @@ Phase 1 MVP: Full CRUD + queries + transactions.
 """
 
 import logging
+import uuid
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -314,7 +315,6 @@ class DocumentViewSet(viewsets.ViewSet):
         # Extract doc_id; if not provided, auto-generate
         doc_id = request.data.get('doc_id')
         if not doc_id:
-            import uuid
             doc_id = str(uuid.uuid4())
 
         # Check for duplicate
@@ -583,9 +583,10 @@ class TransactionViewSet(viewsets.ViewSet):
                         result['created'] = created
 
                     elif op == 'update':
-                        # Merge with existing data
+                        # Merge with existing data; select_for_update prevents
+                        # concurrent writes from racing on the same document.
                         try:
-                            doc = Document.objects.get(
+                            doc = Document.objects.select_for_update().get(
                                 project=project,
                                 collection_path=collection_path,
                                 doc_id=doc_id
@@ -621,8 +622,9 @@ class TransactionViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # transaction_id is always server-generated to prevent client spoofing.
         return Response({
             'results': results,
             'committed_at': request.META.get('HTTP_DATE', ''),
-            'transaction_id': request.data.get('transaction_id', ''),
+            'transaction_id': str(uuid.uuid4()),
         })

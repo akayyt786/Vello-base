@@ -30,13 +30,18 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
 
 class ProjectSerializer(serializers.ModelSerializer):
-    """Serializer for Project model."""
+    """Serializer for Project model.
+
+    NOTE: api_key is intentionally excluded from this serializer to avoid leaking
+    the key in list and retrieve responses. Use the dedicated /api-key/ endpoint
+    (owner-only) to retrieve it.
+    """
     owner = UserSerializer(read_only=True)
 
     class Meta:
         model = Project
-        fields = ['id', 'name', 'slug', 'owner', 'description', 'api_key', 'is_active', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'api_key', 'owner', 'created_at', 'updated_at']
+        fields = ['id', 'name', 'slug', 'owner', 'description', 'is_active', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'owner', 'created_at', 'updated_at']
 
     def create(self, validated_data):
         """Create project with current user as owner."""
@@ -174,27 +179,56 @@ class MeSerializer(serializers.Serializer):
         return obj.profile.custom_claims if hasattr(obj, 'profile') else {}
 
 
+class CollectionSerializer(serializers.ModelSerializer):
+    """Serializer for Collection model.
+
+    'project' is always read_only — it is set from the URL parameter by the view,
+    never from request body.
+    """
+
+    class Meta:
+        model = Collection
+        fields = ['id', 'project', 'name', 'path', 'schema', 'document_count', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'project', 'document_count', 'created_at', 'updated_at']
+
+
 class DocumentSerializer(serializers.ModelSerializer):
-    """Serializer for Document model."""
-    owner = UserSerializer(read_only=True)
+    """Serializer for Document model.
+
+    Security constraints:
+    - 'project' is read_only — set from URL parameter, never from request body.
+    - 'created_by' and 'updated_by' are read_only — set server-side on create/update.
+    - 'data' field is validated to be at most 1 MB (1,048,576 bytes) when serialized.
+    """
     created_by = UserSerializer(read_only=True)
     updated_by = UserSerializer(read_only=True)
 
     class Meta:
         model = Document
-        fields = ['id', 'project', 'collection', 'data', 'owner', 'created_by', 'updated_by', 'created_at', 'updated_at']
+        fields = [
+            'id', 'project', 'collection_path', 'doc_id', 'data',
+            'created_by', 'updated_by', 'created_at', 'updated_at',
+        ]
         read_only_fields = ['id', 'project', 'created_by', 'updated_by', 'created_at', 'updated_at']
 
+    def validate_data(self, value):
+        """Enforce a 1 MB size limit on document content."""
+        import json
+        serialized = json.dumps(value)
+        if len(serialized.encode('utf-8')) > 1_048_576:
+            raise serializers.ValidationError(
+                "Document data exceeds the maximum allowed size of 1 MB (1,048,576 bytes)."
+            )
+        return value
+
     def create(self, validated_data):
-        """Create document with current user as creator/owner."""
+        """Create document with current user as creator."""
         request = self.context.get('request')
         validated_data['created_by'] = request.user
-        if not validated_data.get('owner'):
-            validated_data['owner'] = request.user
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
-        """Update document and track updater."""
+        """Update document and record the updater."""
         request = self.context.get('request')
         validated_data['updated_by'] = request.user
         return super().update(instance, validated_data)

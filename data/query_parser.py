@@ -3,9 +3,16 @@ Query parser: Convert Firebase-style query params to Django ORM Q objects.
 Supports: where, orderBy, limit, cursor-based pagination.
 """
 
+import re
+
 from django.db.models import Q, F
 from datetime import datetime
 from typing import List, Dict, Any, Tuple
+
+# Allowlist for user-supplied field names.
+# Permits: letters, digits, underscore, dot (nested paths like "address.city").
+# Rejects: empty string, double-underscore (Django ORM traversal), anything else.
+_FIELD_NAME_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_.]*$')
 
 
 class QueryParser:
@@ -16,6 +23,31 @@ class QueryParser:
     - Comparison: ==, !=, <, <=, >, >=
     - Membership: in, not-in, array-contains, array-contains-any
     """
+
+    @staticmethod
+    def _validate_field_name(field: str) -> None:
+        """
+        Reject field names that could cause Django ORM injection.
+
+        Rules:
+        - Must be a non-empty string.
+        - Must not contain '__' (Django ORM relationship traversal / lookup injection).
+        - Must match ^[a-zA-Z_][a-zA-Z0-9_.]*$ (no shell-special chars).
+
+        Raises:
+            ValueError: with a human-readable message on failure.
+        """
+        if not field or not isinstance(field, str):
+            raise ValueError("Field name must be a non-empty string")
+        if '__' in field:
+            raise ValueError(
+                f"Field name '{field}' contains forbidden sequence '__' (ORM traversal)"
+            )
+        if not _FIELD_NAME_RE.match(field):
+            raise ValueError(
+                f"Field name '{field}' contains invalid characters. "
+                "Only letters, digits, underscore, and dot are allowed."
+            )
 
     # Mapping of Firestore operators to Django ORM lookup suffixes
     OPERATOR_MAPPING = {
@@ -64,10 +96,14 @@ class QueryParser:
             op = condition.get('op')
             value = condition.get('value')
 
-            if not field or op not in QueryParser.OPERATOR_MAPPING:
+            # Validate field name before building any ORM lookup key.
+            QueryParser._validate_field_name(field)
+
+            # Validate operator against explicit allowlist (reject unknown ops with descriptive error).
+            if op not in QueryParser.OPERATOR_MAPPING:
                 raise ValueError(
-                    f"Invalid condition: field='{field}', op='{op}'. "
-                    f"Valid ops: {list(QueryParser.OPERATOR_MAPPING.keys())}"
+                    f"Unknown operator '{op}'. "
+                    f"Valid operators: {sorted(QueryParser.OPERATOR_MAPPING.keys())}"
                 )
 
             # Build the JSONB field path: data->>'field_name' for string comparison
@@ -133,8 +169,9 @@ class QueryParser:
             field = spec.get('field', '').strip()
             direction = spec.get('direction', 'asc').lower()
 
-            if not field:
-                raise ValueError("Order spec missing 'field'")
+            # Validate field name (raises ValueError on invalid input).
+            QueryParser._validate_field_name(field)
+
             if direction not in ['asc', 'desc']:
                 raise ValueError(f"Direction must be 'asc' or 'desc', got '{direction}'")
 
@@ -200,6 +237,13 @@ def _apply_array_filter(documents: list, condition: Dict[str, Any]) -> list:
     field = condition.get('field')
     op = condition.get('op')
     value = condition.get('value')
+
+    # Re-validate here even though apply_filters_to_queryset only routes
+    # array ops to this function — belt-and-suspenders against direct calls.
+    if op not in _ARRAY_OPS:
+        raise ValueError(f"Unknown array operator '{op}'. Valid: {_ARRAY_OPS}")
+    QueryParser._validate_field_name(field)
+
     if op == 'array-contains':
         return [doc for doc in documents
                 if isinstance(doc.data.get(field), list) and value in doc.data[field]]

@@ -28,11 +28,13 @@ logger = logging.getLogger(__name__)
 
 
 def _doc_group(project_id: str, collection_path: str, doc_id: str) -> str:
+    # project_id is always the first segment — prevents cross-project group collisions.
     safe = lambda s: str(s).replace('/', '__').replace('-', '_')
     return f'p_{safe(project_id)}_d_{safe(collection_path)}_{safe(doc_id)}'
 
 
 def _col_group(project_id: str, collection_path: str) -> str:
+    # project_id is always the first segment — prevents cross-project group collisions.
     safe = lambda s: str(s).replace('/', '__').replace('-', '_')
     return f'p_{safe(project_id)}_c_{safe(collection_path)}'
 
@@ -68,7 +70,9 @@ class RealtimeConsumer(AsyncJsonWebsocketConsumer):
         logger.info(f'WS connect: user={self.user.id} project={self.project_id}')
 
     async def disconnect(self, close_code):
-        for sub_id, sub in list(self.subscriptions.items()):
+        # Guard against disconnect firing before connect() initialised subscriptions
+        # (e.g. ASGI server error during handshake).
+        for sub_id, sub in list(getattr(self, 'subscriptions', {}).items()):
             await self.channel_layer.group_discard(sub['group'], self.channel_name)
 
         if self.user and self.user.is_authenticated:
@@ -192,6 +196,9 @@ class RealtimeConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json({'type': 'ondisconnect.ack', 'requestId': request_id})
 
     async def realtime_event(self, event):
+        # Secondary project-scope guard: even though group names already embed
+        # project_id (preventing cross-project delivery), we double-check here
+        # to defend against any future group-naming regression.
         project_id = event.get('project_id')
         if project_id != self.project_id:
             return

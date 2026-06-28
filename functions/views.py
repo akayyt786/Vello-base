@@ -32,6 +32,9 @@ def _get_project_and_membership(request, project_id, require_editor=False):
     return project, membership, None
 
 
+MAX_FUNCTIONS_PER_PROJECT = 100
+
+
 class FunctionListView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -43,12 +46,26 @@ class FunctionListView(APIView):
         trigger = request.query_params.get('trigger_type')
         if trigger:
             qs = qs.filter(trigger_type=trigger)
-        return Response({'functions': CloudFunctionSerializer(qs, many=True).data})
+        limit = min(int(request.query_params.get('limit', 50)), 200)
+        offset = int(request.query_params.get('offset', 0))
+        total = qs.count()
+        return Response({
+            'functions': CloudFunctionSerializer(qs[offset:offset + limit], many=True).data,
+            'total': total,
+            'limit': limit,
+            'offset': offset,
+        })
 
     def post(self, request, project_id):
         project, _, err = _get_project_and_membership(request, project_id, require_editor=True)
         if err:
             return err
+        existing_count = CloudFunction.objects.filter(project=project).count()
+        if existing_count >= MAX_FUNCTIONS_PER_PROJECT:
+            return Response(
+                {'error': f'Function limit reached ({MAX_FUNCTIONS_PER_PROJECT} per project).'},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
         ser = CloudFunctionSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         fn = ser.save(project=project, created_by=request.user, updated_by=request.user)
@@ -89,7 +106,8 @@ class FunctionInvokeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, project_id, name):
-        project, _, err = _get_project_and_membership(request, project_id)
+        # Invoke requires editor+ — viewers must not be able to trigger webhook calls.
+        project, _, err = _get_project_and_membership(request, project_id, require_editor=True)
         if err:
             return err
         fn = get_object_or_404(

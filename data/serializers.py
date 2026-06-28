@@ -2,6 +2,8 @@
 DRF serializers for Data API (Collections and Documents).
 """
 
+import re
+
 from rest_framework import serializers
 from data.models import Collection, Document
 
@@ -162,10 +164,26 @@ class DocumentQuerySerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     f"Condition {i}: missing keys {required_keys - set(condition.keys())}"
                 )
+            # Validate field name: reject empty strings, '__' (Django ORM traversal),
+            # and any character outside [a-zA-Z0-9_.].
+            field = condition['field']
+            if not field or not isinstance(field, str):
+                raise serializers.ValidationError(
+                    f"Condition {i}: 'field' must be a non-empty string"
+                )
+            if '__' in field:
+                raise serializers.ValidationError(
+                    f"Condition {i}: field name must not contain '__'"
+                )
+            if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_.]*$', field):
+                raise serializers.ValidationError(
+                    f"Condition {i}: field name '{field}' contains invalid characters"
+                )
+            # Operator allowlist — reject unknown ops with 400.
             valid_ops = {'==', '!=', '<', '<=', '>', '>=', 'in', 'not-in', 'array-contains', 'array-contains-any'}
             if condition['op'] not in valid_ops:
                 raise serializers.ValidationError(
-                    f"Condition {i}: op '{condition['op']}' not supported. Valid: {valid_ops}"
+                    f"Condition {i}: op '{condition['op']}' not supported. Valid: {sorted(valid_ops)}"
                 )
         return where
 
@@ -177,6 +195,21 @@ class DocumentQuerySerializer(serializers.Serializer):
             if not isinstance(spec, dict) or 'field' not in spec:
                 raise serializers.ValidationError(
                     f"Sort spec {i}: must have 'field' key"
+                )
+            # Validate field name: reject empty strings, '__' (Django ORM traversal),
+            # and any character outside [a-zA-Z0-9_.].
+            field = spec['field']
+            if not field or not isinstance(field, str):
+                raise serializers.ValidationError(
+                    f"Sort spec {i}: 'field' must be a non-empty string"
+                )
+            if '__' in field:
+                raise serializers.ValidationError(
+                    f"Sort spec {i}: field name must not contain '__'"
+                )
+            if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_.]*$', field):
+                raise serializers.ValidationError(
+                    f"Sort spec {i}: field name '{field}' contains invalid characters"
                 )
             if spec.get('direction') not in ['asc', 'desc', None]:
                 raise serializers.ValidationError(

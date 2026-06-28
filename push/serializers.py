@@ -11,8 +11,9 @@ class DeviceTokenSerializer(serializers.ModelSerializer):
             'id', 'project', 'user', 'platform', 'token', 'app_id',
             'is_active', 'created_at', 'updated_at',
         ]
-        # user is read_only: callers cannot register tokens on behalf of other users.
-        read_only_fields = ['id', 'project', 'user', 'created_at', 'updated_at']
+        # user and is_active are read_only: callers cannot register tokens on behalf of
+        # other users and cannot directly flip the active flag.
+        read_only_fields = ['id', 'project', 'user', 'is_active', 'created_at', 'updated_at']
 
     def validate_platform(self, value):
         valid = [choice[0] for choice in DeviceToken.PLATFORM_CHOICES]
@@ -114,24 +115,14 @@ class NotificationCampaignSerializer(serializers.ModelSerializer):
                 )
         return value
 
-
-class SendNotificationSerializer(serializers.Serializer):
-    """Input serializer for the ad-hoc send notification endpoint."""
-
-    title = serializers.CharField(max_length=255)
-    body = serializers.CharField()
-    data = serializers.DictField(required=False, default=dict)
-    image_url = serializers.URLField(required=False, allow_blank=True, default='')
-    device_token_id = serializers.UUIDField(required=False, allow_null=True, default=None)
-    topic_id = serializers.UUIDField(required=False, allow_null=True, default=None)
-
     def validate(self, data):
-        if not data.get('device_token_id') and not data.get('topic_id'):
-            raise serializers.ValidationError(
-                'Either device_token_id or topic_id must be specified.'
-            )
-        if data.get('device_token_id') and data.get('topic_id'):
-            raise serializers.ValidationError(
-                'Specify either device_token_id or topic_id, not both.'
-            )
+        # Cross-project IDOR guard: topic FK must belong to the same project.
+        topic = data.get('topic')
+        view = self.context.get('view')
+        if view and topic:
+            project_id = str(view.kwargs.get('project_id', ''))
+            if str(topic.project_id) != project_id:
+                raise serializers.ValidationError(
+                    {'topic': 'Topic does not belong to this project.'}
+                )
         return data

@@ -20,6 +20,8 @@ from .models import StorageFile
 from .serializers import StorageFileSerializer, UploadRequestSerializer, ConfirmUploadSerializer
 from .s3 import get_bucket_name, ensure_bucket, presigned_upload_url, get_object_metadata
 
+MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
+
 logger = logging.getLogger(__name__)
 
 
@@ -48,6 +50,19 @@ class UploadUrlView(APIView):
         ser = UploadRequestSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         d = ser.validated_data
+
+        # Validate file size if the client declares it (via 'size' or 'content_length').
+        declared_size = d.get('size') or request.data.get('content_length')
+        if declared_size is not None:
+            try:
+                declared_size = int(declared_size)
+            except (TypeError, ValueError):
+                declared_size = None
+        if declared_size is not None and declared_size > MAX_FILE_SIZE:
+            return Response(
+                {'error': f'File size exceeds the {MAX_FILE_SIZE // (1024 * 1024)} MB limit.'},
+                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
 
         bucket = get_bucket_name(project.slug)
         try:
@@ -84,7 +99,7 @@ class UploadUrlView(APIView):
             'expires_in': upload_info['expires_in'],
             'path': file_obj.path,
             'bucket': bucket,
-        })
+        }, status=status.HTTP_201_CREATED)
 
 
 class ConfirmUploadView(APIView):
@@ -99,13 +114,19 @@ class ConfirmUploadView(APIView):
         ser.is_valid(raise_exception=True)
 
         file_obj = get_object_or_404(StorageFile, id=ser.validated_data['file_id'], project=project)
+
+        # Idempotent: already confirmed (or further along in lifecycle) — return existing data.
+        if file_obj.status in (StorageFile.STATUS_CONFIRMED, StorageFile.STATUS_PROCESSING,
+                               StorageFile.STATUS_READY):
+            return Response(StorageFileSerializer(file_obj).data, status=status.HTTP_200_OK)
+
         meta = get_object_metadata(file_obj.bucket, file_obj.path)
         file_obj.size = meta.get('size', file_obj.size)
         file_obj.status = StorageFile.STATUS_CONFIRMED
         file_obj.updated_by = request.user
         file_obj.save(update_fields=['size', 'status', 'updated_by', 'updated_at'])
 
-        return Response(StorageFileSerializer(file_obj).data)
+        return Response(StorageFileSerializer(file_obj).data, status=status.HTTP_200_OK)
 
 
 class FileListView(APIView):

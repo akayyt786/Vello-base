@@ -8,7 +8,7 @@ services:
     environment:
       POSTGRES_DB: ${DATABASE_NAME:-ownfirebase}
       POSTGRES_USER: ${DATABASE_USER:-postgres}
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
       POSTGRES_INITDB_ARGS: "-c rls=on"
     ports:
       - "5432:5432"
@@ -75,14 +75,15 @@ services:
     environment:
       DJANGO_SETTINGS_MODULE: ownfirebase.settings
       DEBUG: "False"
+      USE_POSTGRES: "True"
       ALLOWED_HOSTS: "localhost,127.0.0.1,django"
       DATABASE_NAME: ${DATABASE_NAME:-ownfirebase}
       DATABASE_USER: ${DATABASE_USER:-postgres}
-      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
       DATABASE_HOST: postgres
       DATABASE_PORT: "5432"
       REDIS_URL: redis://redis:6379/0
-      SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-secret-key-change-in-prod}
+      SECRET_KEY: ${DJANGO_SECRET_KEY}
     ports:
       - "8000:8000"
     volumes:
@@ -110,13 +111,14 @@ services:
     command: celery -A ownfirebase worker -l info
     environment:
       DJANGO_SETTINGS_MODULE: ownfirebase.settings
+      USE_POSTGRES: "True"
       DATABASE_NAME: ${DATABASE_NAME:-ownfirebase}
       DATABASE_USER: ${DATABASE_USER:-postgres}
-      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
       DATABASE_HOST: postgres
       DATABASE_PORT: "5432"
       REDIS_URL: redis://redis:6379/0
-      SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-secret-key-change-in-prod}
+      SECRET_KEY: ${DJANGO_SECRET_KEY}
     volumes:
       - .:/app
     depends_on:
@@ -136,13 +138,14 @@ services:
     command: celery -A ownfirebase beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
     environment:
       DJANGO_SETTINGS_MODULE: ownfirebase.settings
+      USE_POSTGRES: "True"
       DATABASE_NAME: ${DATABASE_NAME:-ownfirebase}
       DATABASE_USER: ${DATABASE_USER:-postgres}
-      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
       DATABASE_HOST: postgres
       DATABASE_PORT: "5432"
       REDIS_URL: redis://redis:6379/0
-      SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-secret-key-change-in-prod}
+      SECRET_KEY: ${DJANGO_SECRET_KEY}
     volumes:
       - .:/app
     depends_on:
@@ -162,13 +165,14 @@ services:
     command: python manage.py migrate
     environment:
       DJANGO_SETTINGS_MODULE: ownfirebase.settings
+      USE_POSTGRES: "True"
       DATABASE_NAME: ${DATABASE_NAME:-ownfirebase}
       DATABASE_USER: ${DATABASE_USER:-postgres}
-      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
       DATABASE_HOST: postgres
       DATABASE_PORT: "5432"
       REDIS_URL: redis://redis:6379/0
-      SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-secret-key-change-in-prod}
+      SECRET_KEY: ${DJANGO_SECRET_KEY}
     volumes:
       - .:/app
     depends_on:
@@ -188,13 +192,14 @@ services:
     command: pytest --cov=.
     environment:
       DJANGO_SETTINGS_MODULE: ownfirebase.settings
+      USE_POSTGRES: "True"
       DATABASE_NAME: ${DATABASE_NAME:-ownfirebase_test}
       DATABASE_USER: ${DATABASE_USER:-postgres}
-      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
       DATABASE_HOST: postgres
       DATABASE_PORT: "5432"
       REDIS_URL: redis://redis:6379/1
-      SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-secret-key-change-in-prod}
+      SECRET_KEY: ${DJANGO_SECRET_KEY}
     volumes:
       - .:/app
     depends_on:
@@ -215,7 +220,7 @@ services:
     container_name: ownfirebase-push-worker
     environment:
       REDIS_URL: redis://redis:6379/0
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ownfirebase
+      DATABASE_URL: postgresql://${DATABASE_USER}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_NAME}
       FCM_SERVER_KEY: ${FCM_SERVER_KEY:-}
       APNS_KEY_ID: ${APNS_KEY_ID:-}
       APNS_TEAM_ID: ${APNS_TEAM_ID:-}

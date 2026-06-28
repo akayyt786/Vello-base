@@ -56,6 +56,10 @@ def hash_token(token_str):
     return hashlib.sha256(str(token_str).encode()).hexdigest()
 
 
+# Alias used for OTP hashing — same algorithm, named for clarity at call sites.
+hash_otp = hash_token
+
+
 def get_otp_expiry():
     return timezone.now() + timedelta(minutes=10)
 

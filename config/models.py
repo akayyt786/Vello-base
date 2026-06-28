@@ -46,6 +46,10 @@ class RemoteConfig(models.Model):
     default_value = models.TextField(blank=True)
     description = models.CharField(max_length=500, blank=True)
     is_active = models.BooleanField(default=True)
+    is_secret = models.BooleanField(
+        default=False,
+        help_text='If True, default_value is treated as a secret and masked in list responses.',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

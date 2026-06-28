@@ -24,6 +24,7 @@ from enhanced_auth.models import (
     MagicLink,
     CustomToken,
 )
+from enhanced_auth.services import hash_otp
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +146,7 @@ class TestPhoneOTP:
         pv = PhoneVerification.objects.create(
             user=test_user,
             phone_number="+12125551234",
-            otp_code="987654",
+            otp_code=hash_otp("987654"),
             expires_at=timezone.now() + timedelta(minutes=10),
         )
         resp = authenticated_client.post(
@@ -164,7 +165,7 @@ class TestPhoneOTP:
         PhoneVerification.objects.create(
             user=test_user,
             phone_number="+12125550001",
-            otp_code="111111",
+            otp_code=hash_otp("111111"),
             expires_at=timezone.now() + timedelta(minutes=10),
         )
         resp = authenticated_client.post(
@@ -190,7 +191,7 @@ class TestPhoneOTP:
         PhoneVerification.objects.create(
             user=test_user,
             phone_number="+12125550002",
-            otp_code="222222",
+            otp_code=hash_otp("222222"),
             expires_at=timezone.now() - timedelta(minutes=1),
         )
         resp = authenticated_client.post(
@@ -204,13 +205,13 @@ class TestPhoneOTP:
     def test_verify_otp_too_many_attempts(self, authenticated_client, test_user, db):
         """
         Reaching MAX_OTP_ATTEMPTS (5) returns 429.
-        Pre-load attempts=4 so the next increment hits the limit.
+        The view checks attempts >= MAX before incrementing, so pre-load with 5.
         """
         pv = PhoneVerification.objects.create(
             user=test_user,
             phone_number="+12125550003",
-            otp_code="333333",
-            attempts=4,
+            otp_code=hash_otp("333333"),
+            attempts=5,
             expires_at=timezone.now() + timedelta(minutes=10),
         )
         resp = authenticated_client.post(
@@ -437,7 +438,7 @@ class TestMFASMS:
         )
         MFASMSCode.objects.create(
             device=device,
-            code="456789",
+            code=hash_otp("456789"),
             expires_at=timezone.now() + timedelta(minutes=10),
         )
         resp = authenticated_client.post(
@@ -461,7 +462,7 @@ class TestMFASMS:
         )
         MFASMSCode.objects.create(
             device=device,
-            code="654321",
+            code=hash_otp("654321"),
             expires_at=timezone.now() + timedelta(minutes=10),
         )
         resp = authenticated_client.post(
@@ -485,7 +486,7 @@ class TestMFASMS:
         )
         MFASMSCode.objects.create(
             device=device,
-            code="111222",
+            code=hash_otp("111222"),
             expires_at=timezone.now() - timedelta(seconds=1),
         )
         resp = authenticated_client.post(
@@ -625,12 +626,12 @@ class TestMagicLink:
         assert "token is required" in resp.json()["error"].lower()
 
     def test_verify_magic_link_invalid_token(self, api_client, db):
-        """A well-formed UUID that doesn't match any MagicLink returns 404."""
+        """A well-formed UUID that doesn't match any MagicLink returns 400."""
         resp = api_client.get(
             VERIFY_MAGIC_LINK_URL,
             {"token": str(uuid.uuid4())},
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 400
 
 
 # ---------------------------------------------------------------------------

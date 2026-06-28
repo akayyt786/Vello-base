@@ -5,6 +5,7 @@ DRF views: Auth, Projects, Data, Rules (Phase 1 scaffolds).
 import logging
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -31,6 +32,13 @@ from api.serializers import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class StandardPagination(PageNumberPagination):
+    """Default pagination: 20 items per page, configurable up to 100."""
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 100
 
 
 class AuthViewSet(viewsets.ViewSet):
@@ -163,6 +171,14 @@ class AuthViewSet(viewsets.ViewSet):
             return Response(
                 {'detail': 'Invalid credentials'},
                 status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        # Reject disabled accounts — prevents token issuance for deactivated users.
+        if not user.is_active:
+            logger.warning(f"Login attempt for disabled account: {email}")
+            return Response(
+                {'detail': 'Account is disabled.'},
+                status=status.HTTP_403_FORBIDDEN
             )
 
         # Generate tokens with custom claims
@@ -468,6 +484,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
     queryset = Project.objects.all()
     serializer_class = ProjectSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = StandardPagination
 
     def get_queryset(self):
         """Filter projects by current user's membership."""
@@ -484,6 +501,39 @@ class ProjectViewSet(viewsets.ModelViewSet):
             user=self.request.user,
             role='owner'
         )
+
+    def update(self, request, *args, **kwargs):
+        """
+        PATCH/PUT /api/v1/projects/{id}/
+        Blocks any attempt to change project ownership via a regular update.
+        Ownership transfer must go through the dedicated /transfer-ownership/ endpoint.
+        """
+        if 'owner' in request.data or 'owner_id' in request.data:
+            return Response(
+                {'detail': 'Project ownership cannot be changed via this endpoint. '
+                           'Use /transfer-ownership/ instead.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        return super().update(request, *args, **kwargs)
+
+    @action(detail=True, methods=['get'])
+    def api_key(self, request, pk=None):
+        """
+        GET /api/v1/projects/{id}/api-key/
+        Returns the project API key. Only the project owner may access this endpoint.
+        The key is intentionally excluded from the standard list/retrieve responses.
+        """
+        project = self.get_object()
+        if not ProjectMembership.objects.filter(
+            project=project,
+            user=request.user,
+            role='owner'
+        ).exists():
+            return Response(
+                {'detail': 'Only the project owner can view the API key.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        return Response({'api_key': project.api_key})
 
     @action(detail=True, methods=['post'])
     def invite_member(self, request, pk=None):
@@ -682,7 +732,8 @@ class DocumentViewSet(viewsets.ModelViewSet):
     queryset = Document.objects.all()
     serializer_class = DocumentSerializer
     permission_classes = [IsAuthenticated, IsProjectMember, DocumentRules]
-    filterset_fields = ['collection', 'owner']
+    pagination_class = StandardPagination
+    filterset_fields = ['collection_path']
 
     def get_queryset(self):
         """Filter documents by project membership."""

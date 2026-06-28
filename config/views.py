@@ -199,6 +199,23 @@ class RemoteConfigViewSet(_ProjectScopedMixin, viewsets.ModelViewSet):
             'user_id': request.query_params.get('user_id', ''),
         }
 
+        # Warn when clients send context as HTTP headers instead of query params —
+        # those header values are silently discarded and the query param (which may
+        # be absent) is used instead. This helps catch misconfigured clients early.
+        _CONTEXT_HEADER_MAP = {
+            'HTTP_X_PLATFORM': ('platform', '?platform='),
+            'HTTP_X_APP_VERSION': ('app_version', '?app_version='),
+            'HTTP_X_USER_ID': ('user_id', '?user_id='),
+        }
+        for meta_key, (param_name, hint) in _CONTEXT_HEADER_MAP.items():
+            header_val = request.META.get(meta_key)
+            if header_val and not request.query_params.get(param_name):
+                logger.warning(
+                    'RemoteConfig fetch [project=%s]: request header %s=%r is present '
+                    'but will be discarded — pass context via query param %s instead.',
+                    project_id, meta_key, header_val, hint,
+                )
+
         configs = RemoteConfig.objects.filter(
             project=project,
             is_active=True,
@@ -219,6 +236,12 @@ class RemoteConfigViewSet(_ProjectScopedMixin, viewsets.ModelViewSet):
         project = self._project(require_editor=True)
 
         with transaction.atomic():
+            # Lock the project row to serialize concurrent publish requests.
+            # Without this lock, two simultaneous publishes can both read the
+            # same max version_number and then race to insert the same next
+            # version, hitting the unique_together constraint.
+            Project.objects.select_for_update().get(pk=project.pk)
+
             # Determine next version number
             max_ver = ConfigVersion.objects.filter(
                 project=project

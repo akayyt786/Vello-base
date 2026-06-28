@@ -21,8 +21,9 @@ class IsProjectMember(BasePermission):
         # Extract project_id from request context (set by middleware)
         project_id = getattr(request, 'tenant_project_id', None)
         if not project_id:
-            # Try to get from URL kwargs
-            project_id = view.kwargs.get('project_id') or view.kwargs.get('pk')
+            # Only use explicit project_id kwarg — never fall back to pk, which is
+            # the object-level primary key in most ViewSets and would cause IDOR.
+            project_id = view.kwargs.get('project_id')
 
         if not project_id:
             return False
@@ -75,6 +76,38 @@ class IsProjectOwner(BasePermission):
                 role='owner'
             ).exists()
         return False
+
+
+class IsProjectEditor(BasePermission):
+    """
+    Allow access only to project members whose role is 'owner' or 'editor'.
+    Unlike IsProjectEditorOrOwner, this does NOT grant read access to plain viewers
+    on SAFE_METHODS — it enforces editor/owner requirement on every method.
+    """
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+
+        project_id = getattr(request, 'tenant_project_id', None) or view.kwargs.get('project_id')
+        if not project_id:
+            return False
+
+        return ProjectMembership.objects.filter(
+            project_id=project_id,
+            user=request.user,
+            role__in=('owner', 'editor')
+        ).exists()
+
+    def has_object_permission(self, request, view, obj):
+        if not hasattr(obj, 'project_id'):
+            return False
+
+        return ProjectMembership.objects.filter(
+            project_id=obj.project_id,
+            user=request.user,
+            role__in=('owner', 'editor')
+        ).exists()
 
 
 class IsProjectEditorOrOwner(BasePermission):

@@ -86,16 +86,27 @@ def invoke_function_for_event(self, function_id, trigger_data):
         fn.secret_header, fn.extra_headers,
     )
 
-    log.status = result['status']
+    # Persist per-attempt diagnostics regardless of retry outcome.
     log.response_status = result.get('response_status')
     log.response_body = result.get('response_body', '')
     log.duration_ms = result.get('duration_ms')
     log.error = result.get('error', '')
+
+    # Retry on both 'error' and 'timeout' outcomes — not just 'error'.
+    will_retry = (
+        result['status'] in ('error', 'timeout')
+        and fn.retry_count > 0
+        and self.request.retries < fn.retry_count
+    )
+
+    if will_retry:
+        # Keep log.status = STATUS_RUNNING so the record correctly reflects
+        # that this attempt is not the final outcome.  STATUS_ERROR/TIMEOUT is
+        # only set once all retries are exhausted.
+        log.save(update_fields=['response_status', 'response_body', 'duration_ms', 'error'])
+        raise self.retry(countdown=60 * (self.request.retries + 1))
+
+    # Final outcome (success, or all retries exhausted).
+    log.status = result['status']
     log.save(update_fields=['status', 'response_status', 'response_body', 'duration_ms', 'error'])
-
-    if result['status'] == 'error' and fn.retry_count > 0:
-        retries_so_far = self.request.retries
-        if retries_so_far < fn.retry_count:
-            raise self.retry(countdown=60 * (retries_so_far + 1))
-
     return result

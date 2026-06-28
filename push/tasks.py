@@ -6,6 +6,7 @@ import json
 import logging
 
 from celery import shared_task
+from django.db import transaction
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -91,7 +92,7 @@ def send_campaign(self, campaign_id):
     For each matching token a PushNotification is created and
     deliver_push_notification is queued asynchronously.
     """
-    from push.models import NotificationCampaign, DeviceToken, PushNotification
+    from push.models import NotificationCampaign, DeviceToken, PushNotification, TopicSubscription
 
     try:
         campaign = NotificationCampaign.objects.select_related('project', 'topic').get(id=campaign_id)
@@ -105,35 +106,42 @@ def send_campaign(self, campaign_id):
     tokens_qs = DeviceToken.objects.filter(project=campaign.project, is_active=True)
     if campaign.target_platforms:
         tokens_qs = tokens_qs.filter(platform__in=campaign.target_platforms)
+    # If the campaign targets a specific topic, limit delivery to subscribed devices only.
+    if campaign.topic:
+        subscribed_ids = TopicSubscription.objects.filter(
+            topic=campaign.topic,
+        ).values_list('device_token_id', flat=True)
+        tokens_qs = tokens_qs.filter(id__in=subscribed_ids)
 
     total_sent = 0
     total_failed = 0
 
-    for token in tokens_qs.iterator():
-        try:
-            notification = PushNotification.objects.create(
-                project=campaign.project,
-                title=campaign.title,
-                body=campaign.body,
-                data=campaign.data,
-                image_url=campaign.image_url,
-                device_token=token,
-                status=PushNotification.STATUS_PENDING,
-            )
-            deliver_push_notification.delay(str(notification.id))
-            total_sent += 1
-        except Exception as exc:
-            logger.error(
-                'send_campaign: failed to create/queue notification for token %s in campaign %s: %s',
-                token.id, campaign_id, exc,
-            )
-            total_failed += 1
+    with transaction.atomic():
+        for token in tokens_qs.iterator():
+            try:
+                notification = PushNotification.objects.create(
+                    project=campaign.project,
+                    title=campaign.title,
+                    body=campaign.body,
+                    data=campaign.data,
+                    image_url=campaign.image_url,
+                    device_token=token,
+                    status=PushNotification.STATUS_PENDING,
+                )
+                deliver_push_notification.delay(str(notification.id))
+                total_sent += 1
+            except Exception as exc:
+                logger.error(
+                    'send_campaign: failed to create/queue notification for token %s in campaign %s: %s',
+                    token.id, campaign_id, exc,
+                )
+                total_failed += 1
 
-    campaign.status = NotificationCampaign.STATUS_SENT
-    campaign.sent_at = timezone.now()
-    campaign.total_sent = total_sent
-    campaign.total_failed = total_failed
-    campaign.save(update_fields=['status', 'sent_at', 'total_sent', 'total_failed', 'updated_at'])
+        campaign.status = NotificationCampaign.STATUS_SENT
+        campaign.sent_at = timezone.now()
+        campaign.total_sent = total_sent
+        campaign.total_failed = total_failed
+        campaign.save(update_fields=['status', 'sent_at', 'total_sent', 'total_failed', 'updated_at'])
 
     logger.info(
         'send_campaign: campaign %s complete — sent=%d failed=%d',

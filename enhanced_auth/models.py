@@ -26,7 +26,7 @@ class PhoneVerification(models.Model):
         related_name='phone_verifications',
     )
     phone_number = models.CharField(max_length=20)
-    otp_code = models.CharField(max_length=6)
+    otp_code = models.CharField(max_length=64)  # stores SHA-256 hex digest
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_PENDING)
     attempts = models.PositiveSmallIntegerField(default=0)
     expires_at = models.DateTimeField()
@@ -67,6 +67,8 @@ class MFADevice(models.Model):
     phone_number = models.CharField(max_length=20, blank=True)
     is_active = models.BooleanField(default=False)
     confirmed_at = models.DateTimeField(null=True, blank=True)
+    # Tracks the most recent TOTP counter used — prevents replay attacks.
+    last_used_counter = models.IntegerField(default=-1)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -81,9 +83,10 @@ class MFASMSCode(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     device = models.ForeignKey(MFADevice, on_delete=models.CASCADE, related_name='sms_codes')
-    code = models.CharField(max_length=6)
+    code = models.CharField(max_length=64)  # stores SHA-256 hex digest
     expires_at = models.DateTimeField()
     is_used = models.BooleanField(default=False)
+    attempts = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

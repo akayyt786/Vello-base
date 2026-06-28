@@ -292,7 +292,7 @@ class TestUploadUrlView:
             {'path': 'docs/file.pdf', 'content_type': 'application/pdf'},
             format='json',
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 201
         data = resp.json()
         assert 'file_id' in data
         assert data['upload_url'] == 'https://minio/upload'

@@ -31,6 +31,9 @@ def pytest_configure(config):
         return
     settings.CHANNEL_LAYERS = TEST_CHANNEL_LAYERS
     settings.CACHES = TEST_CACHES
+    # The security commit changed DEBUG default to False, enabling SECURE_SSL_REDIRECT.
+    # Tests use the Django test client which sends plain HTTP — disable the redirect.
+    settings.SECURE_SSL_REDIRECT = False
 
 
 @pytest.fixture

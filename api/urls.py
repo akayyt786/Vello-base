@@ -13,11 +13,11 @@ from api.views import (
     DocumentViewSet,
 )
 
-# Create router and register viewsets
+# Flat router — DocumentViewSet is NOT registered here because it must be nested
+# under /projects/<project_id>/documents/ so that project_id is available in kwargs.
 router = DefaultRouter()
 router.register(r'projects', ProjectViewSet, basename='project')
 router.register(r'memberships', ProjectMembershipViewSet, basename='membership')
-router.register(r'documents', DocumentViewSet, basename='document')
 
 # Auth endpoints (singleton views)
 auth_urls = [
@@ -41,9 +41,31 @@ rules_urls = [
     path('rules/test/', RulesViewSet.as_view({'post': 'test_rules'}), name='rules-test'),
 ]
 
+# Document endpoints nested under projects so that project_id is always present in
+# view.kwargs. IsProjectMember and get_queryset() both rely on this kwarg for
+# per-project isolation and membership verification.
+document_urls = [
+    path(
+        'projects/<uuid:project_id>/documents/',
+        DocumentViewSet.as_view({'get': 'list', 'post': 'create'}),
+        name='document-list',
+    ),
+    path(
+        'projects/<uuid:project_id>/documents/<uuid:pk>/',
+        DocumentViewSet.as_view({
+            'get': 'retrieve',
+            'put': 'update',
+            'patch': 'partial_update',
+            'delete': 'destroy',
+        }),
+        name='document-detail',
+    ),
+]
+
 urlpatterns = [
     path('', include(router.urls)),
     path('', include(auth_urls)),
     path('', include(data_urls)),
     path('', include(rules_urls)),
+    path('', include(document_urls)),
 ]

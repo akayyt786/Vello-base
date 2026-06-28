@@ -179,8 +179,10 @@ class NetworkRequest(models.Model):
         db_index=True,
         related_name='network_requests',
     )
+    HTTP_METHOD_CHOICES = [(m, m) for m in ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")]
+
     url = models.CharField(max_length=2048)
-    http_method = models.CharField(max_length=8)
+    http_method = models.CharField(max_length=8, choices=HTTP_METHOD_CHOICES)
     response_code = models.PositiveSmallIntegerField(null=True, blank=True)
 
     request_size_bytes = models.PositiveBigIntegerField(default=0)
