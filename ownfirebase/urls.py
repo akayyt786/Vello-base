@@ -53,6 +53,12 @@ urlpatterns = [
 
     # A/B Testing API
     path('api/projects/<uuid:project_id>/abtesting/', include('abtesting.urls', namespace='abtesting')),
+
+    # AI Proxy API
+    path('api/projects/<uuid:project_id>/ai/', include('ai.urls', namespace='ai')),
+
+    # RAG / Vector Search API
+    path('api/projects/<uuid:project_id>/rag/', include('rag.urls', namespace='rag')),
 ]
 
 if settings.DEBUG:

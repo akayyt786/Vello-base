@@ -58,6 +58,8 @@ INSTALLED_APPS = [
     'app_check.apps.AppCheckConfig',
     'social_auth.apps.SocialAuthConfig',
     'abtesting.apps.ABTestingConfig',
+    'ai.apps.AIConfig',
+    'rag.apps.RAGConfig',
 ]
 
 MIDDLEWARE = [

@@ -1,0 +1,17 @@
+{
+  "name": "@ownfirebase/js-sdk",
+  "version": "0.5.0",
+  "description": "OwnFirebase JavaScript/TypeScript SDK",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest"
+  },
+  "keywords": ["firebase", "backend", "sdk"],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0"
+  }
+}
