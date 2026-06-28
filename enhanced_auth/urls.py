@@ -28,4 +28,10 @@ urlpatterns = [
     # Passwordless Magic Link
     path('magic-link/send/', views.SendMagicLinkView.as_view(), name='magic-link-send'),
     path('magic-link/verify/', views.VerifyMagicLinkView.as_view(), name='magic-link-verify'),
+
+    # Anonymous account upgrade / password management / email linking
+    path('upgrade/', views.AnonymousUpgradeView.as_view(), name='anonymous-upgrade'),
+    path('set-password/', views.SetPasswordView.as_view(), name='set-password'),
+    path('link-email/', views.LinkEmailView.as_view(), name='link-email'),
+    path('verify-email-change/', views.VerifyEmailChangeView.as_view(), name='verify-email-change'),
 ]

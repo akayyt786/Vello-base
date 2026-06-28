@@ -37,13 +37,14 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from core.models import Project, ProjectMembership
+from core.models import Project, ProjectMembership, UserProfile
 from .models import PhoneVerification, MFADevice, MFASMSCode, MagicLink, CustomToken
 from .serializers import (
     SendOTPSerializer, VerifyOTPSerializer,
     EnrollTOTPSerializer, ConfirmTOTPSerializer, VerifyTOTPSerializer,
     EnrollSMSSerializer, ConfirmSMSSerializer, VerifySMSSerializer,
     MFADeviceSerializer, SendMagicLinkSerializer, IssueCustomTokenSerializer,
+    AnonymousUpgradeSerializer, SetPasswordSerializer, LinkEmailSerializer,
 )
 from .services import (
     generate_otp, send_sms, send_magic_link_email, hash_token, hash_otp,
@@ -518,3 +519,208 @@ class IssueCustomTokenView(APIView):
         )
 
         return Response({'token': token, 'expires_at': get_custom_token_expiry().isoformat()}, status=status.HTTP_201_CREATED)
+
+
+# ---------------------------------------------------------------------------
+# Anonymous account upgrade / password management / email linking
+# ---------------------------------------------------------------------------
+
+def _is_anonymous_user(user):
+    """Return True if the user is an anonymous (guest) account."""
+    if user.username.startswith('anon_'):
+        return True
+    try:
+        return user.profile.sign_in_provider == 'anonymous'
+    except UserProfile.DoesNotExist:
+        return False
+
+
+def _unique_username_for_email(email, exclude_pk):
+    """
+    Derive a unique username from an email address.
+    Falls back to email+integer suffix if the base is already taken.
+    """
+    base = email[:150]
+    username = base
+    i = 1
+    while User.objects.filter(username=username).exclude(pk=exclude_pk).exists():
+        suffix = str(i)
+        username = base[: 150 - len(suffix)] + suffix
+        i += 1
+    return username
+
+
+class AnonymousUpgradeView(APIView):
+    """
+    POST /api/v1/auth/upgrade/
+    Upgrade an anonymous account to a permanent email/password account.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        ser = AnonymousUpgradeSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        user = request.user
+
+        if not _is_anonymous_user(user):
+            return Response(
+                {'detail': 'Account already has credentials.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        email = ser.validated_data['email']
+
+        # Validate email not already taken by another user.
+        if User.objects.filter(email__iexact=email).exclude(pk=user.pk).exists():
+            return Response(
+                {'email': 'This email is already in use.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        new_username = _unique_username_for_email(email, exclude_pk=user.pk)
+
+        with transaction.atomic():
+            user.email = email
+            user.username = new_username
+            user.set_password(ser.validated_data['password'])
+            user.save(update_fields=['email', 'username', 'password'])
+
+            try:
+                profile = user.profile
+                profile.sign_in_provider = 'password'
+                profile.save(update_fields=['sign_in_provider'])
+            except UserProfile.DoesNotExist:
+                pass
+
+        return Response({
+            'detail': 'Account upgraded successfully.',
+            **_jwt_for_user(user),
+        }, status=status.HTTP_200_OK)
+
+
+class SetPasswordView(APIView):
+    """
+    POST /api/v1/auth/set-password/
+    Set or change the account password. If the user has no usable password
+    (e.g. OAuth-only account), current_password may be omitted.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        ser = SetPasswordSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        user = request.user
+        current_password = ser.validated_data.get('current_password', '')
+
+        # If user already has a usable password, require current_password to match.
+        if user.has_usable_password():
+            if not current_password:
+                return Response(
+                    {'current_password': 'Current password is required.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not user.check_password(current_password):
+                return Response(
+                    {'current_password': 'Incorrect password.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        user.set_password(ser.validated_data['new_password'])
+        user.save(update_fields=['password'])
+
+        return Response({'detail': 'Password updated.'}, status=status.HTTP_200_OK)
+
+
+class LinkEmailView(APIView):
+    """
+    POST /api/v1/auth/link-email/
+    Initiate email-change/link flow. Sends a verification token to the requested
+    address; the email is NOT updated until the token is confirmed via
+    VerifyEmailChangeView. This prevents account takeover via unverified email claim.
+    """
+    permission_classes = [IsAuthenticated]
+
+    _CACHE_TTL = 900  # 15 minutes
+
+    def post(self, request):
+        ser = LinkEmailSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        email = ser.validated_data['email']
+
+        if User.objects.filter(email__iexact=email).exclude(pk=request.user.pk).exists():
+            return Response(
+                {'email': 'This email is already in use.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        import uuid as _uuid
+        token = str(_uuid.uuid4())
+        cache_key = f'email_change:{token}'
+        cache.set(cache_key, {'user_id': request.user.pk, 'email': email}, timeout=self._CACHE_TTL)
+
+        # Send verification email to the *new* address.
+        try:
+            from django.core.mail import send_mail
+            from django.conf import settings as _settings
+            base_url = getattr(_settings, 'MAGIC_LINK_BASE_URL', 'http://localhost:8000')
+            verify_url = f"{base_url}/api/v1/auth/verify-email-change/?token={token}"
+            send_mail(
+                subject='Confirm your new email address',
+                message=f'Click to confirm: {verify_url}\n\nThis link expires in 15 minutes.',
+                from_email=_settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[email],
+            )
+        except Exception as exc:
+            logger.error('Email change verification email failed for user %s: %s', request.user.pk, exc)
+            return Response(
+                {'detail': 'Failed to send verification email. Please try again.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        return Response(
+            {'detail': 'Verification email sent. Check your inbox to confirm the new address.'},
+            status=status.HTTP_200_OK,
+        )
+
+
+class VerifyEmailChangeView(APIView):
+    """
+    GET /api/v1/auth/verify-email-change/?token=<uuid>
+    Confirm a pending email change initiated by LinkEmailView.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        token = request.query_params.get('token', '').strip()
+        if not token:
+            return Response({'error': 'Token required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        cache_key = f'email_change:{token}'
+        pending = cache.get(cache_key)
+        if not pending:
+            return Response({'error': 'Invalid or expired token.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        user_id = pending['user_id']
+        new_email = pending['email']
+
+        # Recheck uniqueness at confirmation time (race: another user may have claimed it).
+        if User.objects.filter(email__iexact=new_email).exclude(pk=user_id).exists():
+            cache.delete(cache_key)
+            return Response(
+                {'error': 'This email address is already in use.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        user = User.objects.filter(pk=user_id).first()
+        if not user:
+            cache.delete(cache_key)
+            return Response({'error': 'User not found.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        user.email = new_email
+        user.save(update_fields=['email'])
+        cache.delete(cache_key)
+
+        return Response({'detail': 'Email address updated successfully.'}, status=status.HTTP_200_OK)

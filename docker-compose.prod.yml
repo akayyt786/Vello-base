@@ -1,0 +1,36 @@
+# docker-compose.prod.yml — Production overrides for OwnFirebase.
+#
+# Usage (via `own deploy` or manually):
+#   docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# This file is merged on top of docker-compose.yml.  Only values that differ
+# from the base file need to be specified here.
+
+version: '3.9'
+
+services:
+  django:
+    # Replace daphne dev server with gunicorn + 4 synchronous workers.
+    # WebSocket / ASGI routes should be handled by a separate Daphne process
+    # or an ASGI gateway (nginx-unit, Uvicorn) placed behind the load balancer.
+    command: >
+      bash -c "
+        python manage.py migrate --noinput &&
+        python manage.py createcachetable &&
+        python manage.py collectstatic --noinput &&
+        gunicorn ownfirebase.wsgi:application -b 0.0.0.0:8000 -w 4 --timeout 120 --access-logfile -
+      "
+    environment:
+      DJANGO_SETTINGS_MODULE: ownfirebase.settings
+      # SSL termination is handled by the upstream reverse proxy (nginx / Caddy).
+      # Set to "true" only if Django itself terminates TLS.
+      SECURE_SSL_REDIRECT: "false"
+      # Disable debug mode unconditionally in production.
+      DEBUG: "False"
+    restart: unless-stopped
+
+  celery:
+    restart: unless-stopped
+
+  celery_beat:
+    restart: unless-stopped

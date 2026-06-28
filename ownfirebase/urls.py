@@ -47,6 +47,12 @@ urlpatterns = [
 
     # App Check API
     path('api/projects/<uuid:project_id>/app-check/', include('app_check.urls', namespace='app_check')),
+
+    # Social Auth (Google, GitHub sign-in + linked accounts)
+    path('api/v1/auth/social/', include('social_auth.urls', namespace='social_auth')),
+
+    # A/B Testing API
+    path('api/projects/<uuid:project_id>/abtesting/', include('abtesting.urls', namespace='abtesting')),
 ]
 
 if settings.DEBUG:

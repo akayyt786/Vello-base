@@ -56,6 +56,8 @@ INSTALLED_APPS = [
     'config.apps.ConfigAppConfig',
     'enhanced_auth.apps.EnhancedAuthConfig',
     'app_check.apps.AppCheckConfig',
+    'social_auth.apps.SocialAuthConfig',
+    'abtesting.apps.ABTestingConfig',
 ]
 
 MIDDLEWARE = [
@@ -320,3 +322,8 @@ TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER', '')
 MAGIC_LINK_BASE_URL = os.environ.get('MAGIC_LINK_BASE_URL', 'http://localhost:8000')
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@ownfirebase.local')
 EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
+
+# Social Auth (Google, GitHub)
+GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
+GITHUB_CLIENT_ID = os.environ.get('GITHUB_CLIENT_ID', '')
+GITHUB_CLIENT_SECRET = os.environ.get('GITHUB_CLIENT_SECRET', '')
