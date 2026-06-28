@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     'realtime',
     'storage',
     'functions',
+    'push',
 ]
 
 MIDDLEWARE = [
@@ -288,3 +289,12 @@ if os.getenv('USE_S3', 'False') == 'True':
 # Stored in Django thread-local context for RLS enforcement
 CONTEXT_VAR_PROJECT_ID = 'project_id'
 CONTEXT_VAR_USER_ID = 'user_id'
+
+# Push Notifications credentials
+FCM_SERVER_KEY = os.environ.get('FCM_SERVER_KEY', '')
+VAPID_PRIVATE_KEY = os.environ.get('VAPID_PRIVATE_KEY', '')
+VAPID_SUBJECT = os.environ.get('VAPID_SUBJECT', 'mailto:admin@example.com')
+APNS_KEY_ID = os.environ.get('APNS_KEY_ID', '')
+APNS_TEAM_ID = os.environ.get('APNS_TEAM_ID', '')
+APNS_BUNDLE_ID = os.environ.get('APNS_BUNDLE_ID', '')
+PUSH_QUEUE_KEY = 'ownfb:push:queue'

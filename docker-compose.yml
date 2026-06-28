@@ -207,6 +207,31 @@ services:
     profiles:
       - tests
 
+  # Rust push-worker: async multi-platform notification delivery
+  push-worker:
+    build:
+      context: ./rust/push-worker
+      dockerfile: Dockerfile
+    container_name: ownfirebase-push-worker
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ownfirebase
+      FCM_SERVER_KEY: ${FCM_SERVER_KEY:-}
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_BUNDLE_ID: ${APNS_BUNDLE_ID:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@example.com}
+      PUSH_WORKER_CONCURRENCY: "8"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ownfirebase
+    restart: unless-stopped
+
 networks:
   ownfirebase:
     driver: bridge

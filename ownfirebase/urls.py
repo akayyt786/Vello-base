@@ -29,4 +29,7 @@ urlpatterns = [
 
     # Cloud Functions API
     path('api/projects/<uuid:project_id>/functions/', include('functions.urls', namespace='functions')),
+
+    # Push Notifications API
+    path('api/projects/<uuid:project_id>/push/', include('push.urls', namespace='push')),
 ]
