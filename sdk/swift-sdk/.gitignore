@@ -1,0 +1,49 @@
+# Xcode
+.DS_Store
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+build/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.xcbkptlist
+*.moved-aside
+*.xccheckout
+*.playground
+
+# Swift Package Manager
+.build/
+*.swiftpm/
+*.xcframework/
+.swiftpm/
+
+# CocoaPods
+Pods/
+Podfile.lock
+
+# Carthage
+Carthage/
+Cartfile.lock
+
+# SPM
+.package
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Misc
+.env
+.env.local
+*.log
+node_modules/
+
+# Test outputs
+.coverage
+coverage.lcov
+*.profdata

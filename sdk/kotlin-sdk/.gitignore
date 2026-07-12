@@ -1,0 +1,32 @@
+# Gradle
+.gradle/
+build/
+gradle-app.setting
+!gradle-wrapper.jar
+.gradletasknamecache
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# JVM
+*.jar
+*.war
+*.ear
+*.class
+*.log
+
+# Kotlin
+.kotlin_build/
+*.kt.bak
+
+# Output
+out/
+dist/

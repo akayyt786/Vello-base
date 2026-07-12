@@ -1,0 +1,16 @@
+name: ownfirebase_sdk
+description: Dart SDK for OwnFirebase — a self-hosted Firebase alternative built on Django + PostgreSQL.
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  http: ^1.1.0
+  uuid: ^4.0.0
+
+dev_dependencies:
+  test: ^1.24.0
+  mockito: ^5.4.0
+  build_runner: ^2.4.0

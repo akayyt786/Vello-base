@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ownfirebase"
+version = "0.5.0"
+description = "Python SDK for OwnFirebase — a self-hosted Firebase alternative"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "OwnFirebase Contributors", email = "dev@ownfirebase.dev"}
+]
+keywords = ["firebase", "backend", "sdk", "ownfirebase"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "requests>=2.28.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.20.0",
+    "pytest-cov>=4.0",
+    "black>=23.0",
+    "isort>=5.12",
+    "mypy>=1.0",
+    "types-requests>=2.28.0",
+]
+async = [
+    "aiohttp>=3.8.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/akayyt786/ownfirebase"
+Documentation = "https://github.com/akayyt786/ownfirebase#python-sdk"
+Repository = "https://github.com/akayyt786/ownfirebase.git"
+"Bug Tracker" = "https://github.com/akayyt786/ownfirebase/issues"
+
+[tool.setuptools]
+packages = ["ownfirebase"]
+
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311', 'py312']
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short"

@@ -50,7 +50,7 @@ export class StorageSDK extends OwnFirebaseClient {
    * Only works in environments with fetch + Blob support (browsers, Deno, Node 18+).
    */
   async upload(
-    file: Blob | Buffer,
+    file: Blob | Buffer | ArrayBuffer,
     options: { filename: string; contentType: string; path?: string }
   ): Promise<StorageObject> {
     const { upload_url, object_key } = await this.getUploadUrl(options);
@@ -58,7 +58,7 @@ export class StorageSDK extends OwnFirebaseClient {
     const putResponse = await fetch(upload_url, {
       method: 'PUT',
       headers: { 'Content-Type': options.contentType },
-      body: file,
+      body: file as any,
     });
 
     if (!putResponse.ok) {
