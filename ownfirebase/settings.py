@@ -205,6 +205,13 @@ REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     # Cursor pagination for firestore-like keyset pagination
     'CURSOR_PAGINATION_TEMPLATE': 'rest_framework/pagination/numbers.html',
+    # Rate for the 'login' throttle scope only (see core/throttling.LoginRateThrottle).
+    # This does NOT enable throttling globally — no DEFAULT_THROTTLE_CLASSES is set here,
+    # so only views/actions that explicitly reference a throttle with scope='login'
+    # (i.e. AuthViewSet.login) are rate-limited.
+    'DEFAULT_THROTTLE_RATES': {
+        'login': '5/min',
+    },
 }
 
 # JWT Settings (SimplJWT)
@@ -332,3 +339,13 @@ EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.conso
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
 GITHUB_CLIENT_ID = os.environ.get('GITHUB_CLIENT_ID', '')
 GITHUB_CLIENT_SECRET = os.environ.get('GITHUB_CLIENT_SECRET', '')
+
+# Sentry error tracking: no-op unless SENTRY_DSN is set in the environment.
+# Safe to call unconditionally — init_sentry() decides whether to actually
+# initialize, and never raises even if sentry-sdk isn't installed.
+try:
+    from core.observability import init_sentry
+    init_sentry()
+except Exception:
+    import logging
+    logging.getLogger(__name__).warning('Sentry initialization failed; continuing without it.', exc_info=True)

@@ -5,6 +5,7 @@ Tests JWT token generation, custom claims, and token blacklist.
 
 import pytest
 import json
+from django.core.cache import cache
 from django.urls import reverse
 from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -15,6 +16,22 @@ from core.models import UserProfile, RefreshTokenBlacklist
 @pytest.mark.django_db
 class TestAuthViewSet:
     """Tests for auth endpoints."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_throttle_cache(self):
+        """
+        Clear the shared cache before each test in this class.
+
+        tests/conftest.py overrides CACHES with a single in-memory cache for
+        the whole test session (see pytest_configure). AuthViewSet.login is
+        rate-limited (DEFAULT_THROTTLE_RATES['login'] = '5/min', see
+        core/throttling.LoginRateThrottle), which is keyed by client IP —
+        the same IP is used across every test in this session. Without
+        clearing here, login calls across this file's many tests would
+        accumulate against the same throttle bucket and eventually trip a
+        429 unrelated to what any individual test is checking.
+        """
+        cache.clear()
 
     def test_register_success(self, api_client):
         """Test successful user registration."""

@@ -8,8 +8,13 @@ from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 from enhanced_auth.views import IssueCustomTokenView
 from billing.views import TiersView
+from core.health import liveness, readiness
 
 urlpatterns = [
+    # Health check endpoints (plain Django views, no auth — for load balancers/orchestrators)
+    path('health/', liveness, name='health'),
+    path('ready/', readiness, name='ready'),
+
     # Django admin
     path('admin/', admin.site.urls),
 

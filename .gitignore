@@ -70,3 +70,14 @@ logs/
 
 # Rust build artifacts
 rust/target/
+
+# Node / TypeScript SDK
+node_modules/
+coverage/
+
+# Gradle / Kotlin SDK
+.gradle/
+
+# Swift SDK
+.build/
+.swiftpm/

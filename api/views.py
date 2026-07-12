@@ -17,6 +17,7 @@ from django.utils import timezone
 from core.models import Project, ProjectMembership, UserProfile, RefreshTokenBlacklist
 from data.models import Document
 from core.permissions import IsProjectMember, IsProjectOwner, IsProjectEditorOrOwner
+from core.throttling import LoginRateThrottle
 from rules.permissions import DocumentRules
 from api.serializers import (
     ProjectSerializer,
@@ -55,6 +56,29 @@ class AuthViewSet(viewsets.ViewSet):
         if handler and hasattr(handler, 'kwargs') and 'permission_classes' in handler.kwargs:
             return [perm() for perm in handler.kwargs['permission_classes']]
         return super().get_permissions()
+
+    def get_throttles(self):
+        """Apply action-level throttle_classes when manually mapped via as_view().
+
+        Mirrors get_permissions() above: since these auth endpoints are wired up
+        directly via AuthViewSet.as_view({...}) in urls.py rather than through a
+        router, the @action(throttle_classes=[...]) kwarg is never forwarded to
+        as_view() and must be read off the handler explicitly.
+        """
+        handler = getattr(self, self.action, None)
+        if handler and hasattr(handler, 'kwargs') and 'throttle_classes' in handler.kwargs:
+            throttles = [throttle() for throttle in handler.kwargs['throttle_classes']]
+            # ScopedRateThrottle resolves its scope from `view.throttle_scope` at
+            # request time rather than from a class attribute on the throttle
+            # itself, so mirror each throttle's scope onto this (per-request)
+            # view instance — this is a fresh instance per request (see
+            # ViewSetMixin.as_view), so there is no cross-request leakage.
+            for throttle in throttles:
+                scope = getattr(throttle, 'scope', None)
+                if scope:
+                    self.throttle_scope = scope
+            return throttles
+        return super().get_throttles()
 
     @action(detail=False, methods=['post'], permission_classes=[AllowAny])
     def register(self, request):
@@ -128,7 +152,7 @@ class AuthViewSet(viewsets.ViewSet):
             'user': UserSerializer(user).data,
         }, status=status.HTTP_201_CREATED)
 
-    @action(detail=False, methods=['post'], permission_classes=[AllowAny])
+    @action(detail=False, methods=['post'], permission_classes=[AllowAny], throttle_classes=[LoginRateThrottle])
     def login(self, request):
         """
         POST /api/auth/login/
