@@ -1,0 +1,413 @@
+# Default values for the ownfirebase chart.
+# Override anything here with `-f my-values.yaml` or `--set key=value`.
+# See README.md for what MUST be overridden before a real production install.
+
+nameOverride: ""
+fullnameOverride: ""
+
+imagePullSecrets: []
+# - name: my-registry-secret
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# ─────────────────────────────────────────────────────────────────────────
+# Application image (built from the repo root Dockerfile).
+# Push it somewhere kind/your cluster can pull it from, e.g.:
+#   docker build -t ownfirebase/api:latest .
+#   kind load docker-image ownfirebase/api:latest
+# ─────────────────────────────────────────────────────────────────────────
+image:
+  repository: ownfirebase/api
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# ─────────────────────────────────────────────────────────────────────────
+# web: gunicorn (WSGI) — REST API only. Handles everything except /ws/.
+# ─────────────────────────────────────────────────────────────────────────
+web:
+  replicaCount: 2
+  gunicornWorkers: 4
+  service:
+    port: 8000
+  # memory sized for real measured usage, not a guess: this app imports a
+  # heavy dependency set per worker (channels, DRF, celery, boto3,
+  # cryptography, sentry-sdk, stripe, twisted/autobahn) — 256Mi for 4
+  # gunicorn workers + master OOMKilled (exit 137) within seconds during a
+  # live kind deploy verification. Bumped with real headroom, not exact-fit.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+    limits:
+      cpu: 500m
+      memory: 768Mi
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ─────────────────────────────────────────────────────────────────────────
+# websocket: daphne (ASGI) — realtime/WebSocket API. Handles /ws/*.
+# This is the fix for the docker-compose.prod.yml gap: prod compose swaps
+# django to gunicorn/WSGI and never runs a second ASGI process, so WebSocket
+# never actually works in a compose-based prod deploy. This chart runs a
+# real, separate ASGI deployment instead.
+# ─────────────────────────────────────────────────────────────────────────
+websocket:
+  replicaCount: 2
+  service:
+    port: 8000
+  # Same import footprint as `web` (same Django app, same installed apps) —
+  # see the memory comment under `web.resources` above.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+    limits:
+      cpu: 500m
+      memory: 768Mi
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ─────────────────────────────────────────────────────────────────────────
+# celery worker: background tasks (celery -A ownfirebase worker)
+# ─────────────────────────────────────────────────────────────────────────
+celeryWorker:
+  replicaCount: 2
+  # Same import footprint as `web` (also imports the full Django app) — see
+  # the memory comment under `web.resources` above; also confirmed
+  # OOMKilled at the old 256Mi limit during live kind verification.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+    limits:
+      cpu: 500m
+      memory: 768Mi
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ─────────────────────────────────────────────────────────────────────────
+# celery beat: scheduler (celery -A ownfirebase beat --scheduler
+# django_celery_beat.schedulers:DatabaseScheduler). Replica count is
+# intentionally NOT configurable here — the template hard-codes 1 because
+# running more than one Beat process corrupts scheduling (duplicate/racing
+# periodic tasks).
+# ─────────────────────────────────────────────────────────────────────────
+celeryBeat:
+  # Single process, but still a full Django import (see web.resources
+  # comment) — 64Mi/128Mi was untested-guess sizing; bumped with headroom.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 192Mi
+    limits:
+      cpu: 200m
+      memory: 384Mi
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ─────────────────────────────────────────────────────────────────────────
+# push-worker: optional Rust binary (rust/push-worker) for FCM/APNs/WebPush
+# delivery. Disabled by default since it needs real FCM/APNs/VAPID
+# credentials most users won't have on hand. NOTE: build this image
+# yourself from the `rust/` directory (the Dockerfile expects the
+# workspace Cargo.toml as build context, i.e. `docker build -f
+# rust/push-worker/Dockerfile rust/` — NOT `rust/push-worker/` alone, that
+# context does not contain the workspace manifest the Dockerfile COPYs).
+# ─────────────────────────────────────────────────────────────────────────
+pushWorker:
+  enabled: false
+  replicaCount: 1
+  image:
+    repository: ownfirebase/push-worker
+    tag: latest
+    pullPolicy: IfNotPresent
+  concurrency: 8
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ─────────────────────────────────────────────────────────────────────────
+# Migration Job (Helm hook) — runs `manage.py migrate`, `createcachetable`
+# and `collectstatic` exactly once per install/upgrade, before the
+# web/websocket/celery pods are expected to serve real traffic.
+#
+# JUDGMENT CALL: the task asked for `helm.sh/hook: pre-install,pre-upgrade`.
+# This chart uses `post-install,pre-upgrade` instead. Reason: Postgres/Redis
+# are bundled in THIS SAME chart. Helm's pre-install hooks run BEFORE any of
+# the chart's normal templates (including the bundled postgres/redis
+# Deployments) are even created — so a pre-install migration Job would
+# always fail on a first install (nothing for it to connect to, and
+# nothing will ever create it while the hook is running). post-install
+# runs after the chart's normal resources have been submitted, and the
+# Job's initContainers wait for Postgres/Redis to actually accept
+# connections before migrating. pre-upgrade is kept as requested since on
+# an upgrade the datastores already exist from the previous release.
+# Known trade-off: on a brand-new install there is a short window (a few
+# seconds) where web/websocket pods may be up before migrations finish;
+# requests touching un-migrated tables will 500 until the Job completes,
+# then resolve on their own. No action needed.
+# ─────────────────────────────────────────────────────────────────────────
+migrationJob:
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  # Same import footprint as `web` (see that comment) plus collectstatic —
+  # bumped from an untested 128Mi/256Mi guess to match.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+    limits:
+      cpu: 500m
+      memory: 768Mi
+
+# ─────────────────────────────────────────────────────────────────────────
+# Ingress: routes the WebSocket path prefix to the websocket Service and
+# everything else to the web Service. See realtime/routing.py — the real
+# WS path is /ws/v1/projects/{project_id}/listen/, so a /ws/ prefix rule
+# is correct and sufficient.
+# ─────────────────────────────────────────────────────────────────────────
+ingress:
+  enabled: true
+  className: nginx
+  host: ownfirebase.local
+  annotations:
+    # Long timeouts so ingress-nginx doesn't kill idle WebSocket connections.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+  tls:
+    enabled: false
+    secretName: ""
+
+# ─────────────────────────────────────────────────────────────────────────
+# Bundled Postgres (pgvector-enabled image — required because
+# postgres-init.sql runs `CREATE EXTENSION IF NOT EXISTS "pgvector"` and
+# rag/models.py + rag/services.py document embedding columns intended to
+# become a real `vector` column on Postgres via pgvector). Set
+# postgresql.enabled=false to point at an external/managed Postgres
+# instead via `externalDatabase.*` below.
+# ─────────────────────────────────────────────────────────────────────────
+postgresql:
+  enabled: true
+  image:
+    repository: pgvector/pgvector
+    tag: pg16
+    pullPolicy: IfNotPresent
+  auth:
+    database: ownfirebase
+    username: postgres
+    # JUDGMENT CALL: unlike the purely-optional integration secrets below,
+    # Postgres cannot start at all without *some* password (the official
+    # image refuses to boot otherwise), and Django's own settings.py
+    # already falls back to this exact same insecure default. Shipping it
+    # here means `helm install` works out of the box on a local kind
+    # cluster with zero extra flags. CHANGE THIS for any real deployment.
+    password: "postgres"
+  persistence:
+    size: 5Gi
+    storageClassName: ""
+  service:
+    port: 5432
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Used only when postgresql.enabled: false.
+externalDatabase:
+  host: ""
+  port: "5432"
+  database: ownfirebase
+  username: postgres
+  # password: set via secrets.databasePassword
+
+# ─────────────────────────────────────────────────────────────────────────
+# Bundled Redis (channel layer + Celery broker + Django cache). No
+# persistence by design — docker-compose.yml mounts a volume but never
+# enables AOF (appendonly), so data is already effectively ephemeral there
+# too. Matching that simplicity rather than over-engineering durability
+# the base app doesn't rely on.
+# ─────────────────────────────────────────────────────────────────────────
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: 7-alpine
+    pullPolicy: IfNotPresent
+  service:
+    port: 6379
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+# Used only when redis.enabled: false. Full connection URL, e.g.
+# redis://:password@my-redis-host:6379/0
+externalRedis:
+  url: ""
+
+# ─────────────────────────────────────────────────────────────────────────
+# Bundled MinIO (S3-compatible object storage for the storage/ app).
+# Set minio.enabled=false to point at real AWS S3 (or another S3-compatible
+# provider) instead via config.awsS3* + secrets.awsAccessKeyId/awsSecretAccessKey.
+# ─────────────────────────────────────────────────────────────────────────
+minio:
+  enabled: true
+  image:
+    repository: minio/minio
+    tag: latest
+    pullPolicy: IfNotPresent
+  auth:
+    rootUser: minioadmin
+    # JUDGMENT CALL: same reasoning as postgresql.auth.password above —
+    # this is the exact same insecure default Django's own settings.py
+    # already falls back to (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
+    # default to "minioadmin"/"minioadmin"). CHANGE THIS for any real
+    # deployment.
+    rootPassword: "minioadmin"
+  persistence:
+    size: 5Gi
+    storageClassName: ""
+  service:
+    apiPort: 9000
+    consolePort: 9001
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# ─────────────────────────────────────────────────────────────────────────
+# Non-secret application configuration (-> ConfigMap). Anything
+# credential/key/token-shaped lives under `secrets:` instead, below.
+# ─────────────────────────────────────────────────────────────────────────
+config:
+  debug: "False"
+  # JUDGMENT CALL (see README "Known gaps" section): ownfirebase/settings.py
+  # hard-codes SECURE_SSL_REDIRECT / SESSION_COOKIE_SECURE / CSRF_COOKIE_SECURE
+  # to `not DEBUG` in Python — it does NOT read them from the environment,
+  # so docker-compose.prod.yml's `SECURE_SSL_REDIRECT: "false"` override is
+  # actually dead configuration upstream, not something this chart can fix
+  # without touching files outside deploy/helm/. With the default
+  # debug: "False" above, Django will force HTTPS redirects and secure-only
+  # cookies. On a local kind cluster with a plain-HTTP ingress (no TLS) this
+  # WILL break login/admin/CSRF. For local kind verification either set
+  # `--set config.debug=true` (exposes /api/docs/ Swagger + debug error
+  # pages — acceptable for local testing, not for real prod) or terminate
+  # TLS at the ingress (ingress.tls.enabled=true) so the secure-cookie/HTTPS
+  # requirements are actually satisfied.
+  allowedHosts: "localhost,127.0.0.1,ownfirebase.local"
+  corsAllowedOrigins: "http://localhost:3000,http://localhost:8000"
+
+  useS3: "True"
+  awsStorageBucketName: ownfirebase
+  awsS3RegionName: us-east-1
+  # Only used when minio.enabled: false (external S3); when minio.enabled:
+  # true this is overridden by the template to the in-cluster MinIO Service.
+  awsS3EndpointUrl: ""
+  awsS3UseSSL: "False"
+
+  emailBackend: "django.core.mail.backends.console.EmailBackend"
+  emailHost: "smtp.gmail.com"
+  emailPort: "587"
+  emailUseTls: "True"
+  emailHostUser: ""
+  defaultFromEmail: "noreply@ownfirebase.local"
+
+  logLevel: INFO
+
+  magicLinkBaseUrl: "http://ownfirebase.local"
+
+  vapidSubject: "mailto:admin@example.com"
+  apnsKeyId: ""
+  apnsTeamId: ""
+  apnsBundleId: ""
+
+  googleClientId: ""
+  githubClientId: ""
+
+  stripeApiBase: ""
+  stripePriceStarter: ""
+  stripePricePro: ""
+  stripePriceEnterprise: ""
+
+  twilioPhoneNumber: ""
+
+  sentryEnvironment: "production"
+  sentryTracesSampleRate: "0.1"
+
+  maintenanceDatabaseUser: ""
+
+# ─────────────────────────────────────────────────────────────────────────
+# Secret-shaped application configuration (-> Secret). Every value here
+# defaults to an empty string unless noted otherwise, meaning that
+# integration is simply disabled/no-op in the app code until you set it
+# (verified by reading each app's source — none of these crash on empty).
+# THE ONLY VALUE THAT MUST BE SET FOR THE APP TO BOOT AT ALL IS
+# djangoSecretKey (Django's settings.py does `os.environ['DJANGO_SECRET_KEY']`
+# with no fallback — the process will crash immediately without it). This
+# chart deliberately does NOT ship an insecure default for it (unlike the
+# datastore passwords above) since it is used for session/CSRF/signing
+# cryptography, not just container bootstrapping.
+# ─────────────────────────────────────────────────────────────────────────
+secrets:
+  djangoSecretKey: ""
+  # Defaults to djangoSecretKey if left blank (matches settings.py:
+  # SIGNING_KEY = os.getenv('JWT_SIGNING_KEY', SECRET_KEY)).
+  jwtSigningKey: ""
+
+  # Defaults to postgresql.auth.password when postgresql.enabled: true.
+  # REQUIRED (no default) when postgresql.enabled: false.
+  databasePassword: ""
+  maintenanceDatabasePassword: ""
+
+  # Default to minio.auth.rootUser/rootPassword when minio.enabled: true.
+  # REQUIRED (no default) when minio.enabled: false.
+  awsAccessKeyId: ""
+  awsSecretAccessKey: ""
+
+  emailHostPassword: ""
+
+  stripeSecretKey: ""
+  stripeWebhookSecret: ""
+
+  twilioAccountSid: ""
+  twilioAuthToken: ""
+
+  githubClientSecret: ""
+
+  fcmServerKey: ""
+  vapidPrivateKey: ""
+
+  # AES key used by ai/encryption.py to encrypt stored AI-provider API
+  # keys at rest. Optional (falls back to an in-code default) but strongly
+  # recommended in production — see ai/encryption.py.
+  aiProviderKek: ""
+
+  sentryDsn: ""

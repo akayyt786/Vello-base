@@ -142,11 +142,11 @@ class AuthSDK extends OwnFirebaseClient {
     );
   }
 
-  Future<AuthTokens> verifyPhoneOTP(String phoneNumber, String code) async {
+  Future<AuthTokens> verifyPhoneOTP(String phoneNumber, String otpCode) async {
     return request<AuthTokens>(
       'POST',
       '$baseUrl/api/v1/auth/phone/verify-otp/',
-      {'phone_number': phoneNumber, 'code': code},
+      {'phone_number': phoneNumber, 'otp_code': otpCode},
       noAuth: true,
       fromJson: (json) => AuthTokens.fromJson(json as Map<String, dynamic>),
     );
@@ -163,20 +163,30 @@ class AuthSDK extends OwnFirebaseClient {
     );
   }
 
-  Future<Map<String, dynamic>> confirmTOTP(String code) async {
+  /// Confirms and activates a TOTP device enrolled via [enrollTOTP].
+  ///
+  /// [deviceId] is the MFA device `id` returned by [enrollTOTP]
+  /// (`enhanced_auth/serializers.py`'s `ConfirmTOTPSerializer` requires both
+  /// `device_id` and `totp_code`).
+  Future<Map<String, dynamic>> confirmTOTP(String deviceId, String totpCode) async {
     return request<Map<String, dynamic>>(
       'POST',
       '$baseUrl/api/v1/auth/mfa/confirm/totp/',
-      {'code': code},
+      {'device_id': deviceId, 'totp_code': totpCode},
       fromJson: (json) => json as Map<String, dynamic>,
     );
   }
 
-  Future<AuthTokens> verifyTOTP(String code) async {
+  /// Verifies a TOTP code for an already-confirmed device (e.g. during login).
+  ///
+  /// [deviceId] identifies which enrolled MFA device the code is for
+  /// (`enhanced_auth/serializers.py`'s `VerifyTOTPSerializer` requires both
+  /// `device_id` and `totp_code`).
+  Future<AuthTokens> verifyTOTP(String deviceId, String totpCode) async {
     return request<AuthTokens>(
       'POST',
       '$baseUrl/api/v1/auth/mfa/verify/totp/',
-      {'code': code},
+      {'device_id': deviceId, 'totp_code': totpCode},
       fromJson: (json) => AuthTokens.fromJson(json as Map<String, dynamic>),
     );
   }
@@ -256,6 +266,22 @@ class AuthSDK extends OwnFirebaseClient {
         'new_password2': newPassword2,
         if (currentPassword != null) 'current_password': currentPassword,
       },
+      fromJson: (json) => json as Map<String, dynamic>,
+    );
+  }
+
+  /// Issue a custom server-signed token for [uid] with arbitrary [claims],
+  /// for exchanging a project's own user identifiers for an OwnFirebase
+  /// session (mirrors Firebase Admin's `createCustomToken`). Requires
+  /// editor/owner role on the project. Returns `{token, expires_at}`.
+  Future<Map<String, dynamic>> issueCustomToken(
+    String uid,
+    Map<String, dynamic> claims,
+  ) async {
+    return request<Map<String, dynamic>>(
+      'POST',
+      projectUrl('auth/custom-token/'),
+      {'uid': uid, 'claims': claims},
       fromJson: (json) => json as Map<String, dynamic>,
     );
   }

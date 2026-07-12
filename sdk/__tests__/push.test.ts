@@ -1,6 +1,6 @@
 import { PushSDK } from '../src/push';
 import type { PushDeviceToken, PushTopic, PaginatedResponse } from '../src/types';
-import type { PushNotificationPayload, PushNotificationRecord } from '../src/push';
+import type { PushNotificationPayload, PushNotificationRecord, PushTopicSubscription } from '../src/push';
 
 global.fetch = jest.fn();
 
@@ -19,7 +19,7 @@ describe('PushSDK', () => {
       const mockToken: PushDeviceToken = {
         id: 'token1',
         token: 'fcm-token-abc123',
-        platform: 'android',
+        platform: 'fcm',
         is_active: true,
       };
 
@@ -33,7 +33,7 @@ describe('PushSDK', () => {
       push.setAccessToken('access-token');
       push.setProjectId('test-project');
 
-      const result = await push.registerToken('fcm-token-abc123', 'android');
+      const result = await push.registerToken('fcm-token-abc123', 'fcm');
 
       expect(result).toEqual(mockToken);
       expect(global.fetch).toHaveBeenCalledWith(
@@ -42,17 +42,17 @@ describe('PushSDK', () => {
           method: 'POST',
           body: JSON.stringify({
             token: 'fcm-token-abc123',
-            platform: 'android',
+            platform: 'fcm',
           }),
         })
       );
     });
 
-    it('should register iOS token', async () => {
+    it('should register iOS (APNs) token', async () => {
       const mockToken: PushDeviceToken = {
         id: 'token2',
         token: 'apns-token-xyz789',
-        platform: 'ios',
+        platform: 'apns',
         is_active: true,
       };
 
@@ -66,7 +66,7 @@ describe('PushSDK', () => {
       push.setAccessToken('access-token');
       push.setProjectId('test-project');
 
-      const result = await push.registerToken('apns-token-xyz789', 'ios');
+      const result = await push.registerToken('apns-token-xyz789', 'apns');
 
       expect(result).toEqual(mockToken);
     });
@@ -100,8 +100,8 @@ describe('PushSDK', () => {
         next: null,
         previous: null,
         results: [
-          { id: 'token1', token: 'fcm-token-abc123', platform: 'android', is_active: true },
-          { id: 'token2', token: 'apns-token-xyz789', platform: 'ios', is_active: true },
+          { id: 'token1', token: 'fcm-token-abc123', platform: 'fcm', is_active: true },
+          { id: 'token2', token: 'apns-token-xyz789', platform: 'apns', is_active: true },
           { id: 'token3', token: 'web-token-web123', platform: 'web', is_active: false },
         ],
       };
@@ -120,7 +120,7 @@ describe('PushSDK', () => {
 
       expect(result.count).toBe(3);
       expect(result.results).toHaveLength(3);
-      expect(result.results[0].platform).toBe('android');
+      expect(result.results[0].platform).toBe('fcm');
     });
 
     it('should delete device token', async () => {
@@ -192,11 +192,16 @@ describe('PushSDK', () => {
     });
 
     it('should subscribe to topic', async () => {
-      const mockResponse = { detail: 'Subscribed to topic' };
+      const mockResponse: PushTopicSubscription = {
+        id: 'sub1',
+        topic: 'topic1',
+        device_token: 'token1',
+        created_at: '2024-01-01T00:00:00Z',
+      };
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        status: 200,
+        status: 201,
         json: async () => mockResponse,
       });
 
@@ -204,9 +209,16 @@ describe('PushSDK', () => {
       push.setAccessToken('access-token');
       push.setProjectId('test-project');
 
-      const result = await push.subscribeTopic('topic1');
+      const result = await push.subscribeTopic('topic1', 'token1');
 
       expect(result).toEqual(mockResponse);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://localhost:8000/api/projects/test-project/push/topics/topic1/subscribe/',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ device_token_id: 'token1' }),
+        })
+      );
     });
   });
 
@@ -240,6 +252,17 @@ describe('PushSDK', () => {
 
       expect(result).toEqual(mockRecord);
       expect(result.recipient_count).toBe(1);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://localhost:8000/api/projects/test-project/push/notifications/',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            device_token: 'token1',
+            title: 'Hello',
+            body: 'Welcome to OwnFirebase',
+          }),
+        })
+      );
     });
 
     it('should send notification with custom data', async () => {
@@ -304,6 +327,17 @@ describe('PushSDK', () => {
       const result = await push.sendToTopic('topic1', payload);
 
       expect(result.recipient_count).toBe(150);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://localhost:8000/api/projects/test-project/push/notifications/',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            topic: 'topic1',
+            title: 'News Update',
+            body: 'Breaking news story',
+          }),
+        })
+      );
     });
 
     it('should send notification with icon and badge', async () => {

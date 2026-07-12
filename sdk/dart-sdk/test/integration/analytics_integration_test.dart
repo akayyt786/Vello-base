@@ -97,7 +97,7 @@ void main() {
     });
 
     test('Analytics query with dimensions and metrics', () {
-      final queryParams = {
+      final queryParams = <String, dynamic>{
         'metric': 'event_count',
         'dimension': 'event_name',
         'start_date': '2024-01-01',
@@ -137,7 +137,7 @@ void main() {
     });
 
     test('Session tracking structure', () {
-      final sessionData = {
+      final sessionData = <String, dynamic>{
         'session_id': 'session-123',
         'user_id': 'user-456',
         'started_at': '2024-01-01T10:00:00Z',
@@ -186,7 +186,7 @@ void main() {
     test('High-volume event batching (1000+ events)', () {
       final largeEventBatch = List.generate(
         1000,
-        (i) => {
+        (i) => <String, dynamic>{
           'name': 'event_${i % 10}',
           'params': {'index': i},
           'timestamp': '2024-01-01T00:00:00Z',

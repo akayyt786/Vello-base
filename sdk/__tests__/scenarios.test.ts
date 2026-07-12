@@ -365,13 +365,13 @@ describe('OwnFirebase Comprehensive Scenarios', () => {
         json: async () => ({
           id: 'token1',
           token: 'fcm-token-xyz',
-          platform: 'android',
+          platform: 'fcm',
           is_active: true,
         }),
       });
 
-      const tokenResult = await app.push.registerToken('fcm-token-xyz', 'android');
-      expect(tokenResult.platform).toBe('android');
+      const tokenResult = await app.push.registerToken('fcm-token-xyz', 'fcm');
+      expect(tokenResult.platform).toBe('fcm');
 
       // Send notification
       (global.fetch as jest.Mock).mockResolvedValueOnce({

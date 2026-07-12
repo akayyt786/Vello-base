@@ -1,0 +1,63 @@
+{{/*
+celery beat: scheduler. `replicas` is hard-coded to 1 below and NOT read
+from values.yaml on purpose — Celery Beat is not safe to run more than one
+of (duplicate/racing periodic task execution), so there is no values knob
+that could accidentally violate that invariant.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ownfirebase.fullname" . }}-celery-beat
+  labels:
+    {{- include "ownfirebase.componentLabels" (dict "context" . "component" "celery-beat") | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "ownfirebase.componentSelectorLabels" (dict "context" . "component" "celery-beat") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ownfirebase.componentSelectorLabels" (dict "context" . "component" "celery-beat") | nindent 8 }}
+      {{- with .Values.celeryBeat.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "ownfirebase.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        {{- include "ownfirebase.waitForDeps" . | nindent 8 }}
+      containers:
+        - name: celery-beat
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - celery
+            - -A
+            - ownfirebase
+            - beat
+            - -l
+            - info
+            - --scheduler
+            - django_celery_beat.schedulers:DatabaseScheduler
+          {{- include "ownfirebase.envFrom" . | nindent 10 }}
+          resources:
+            {{- toYaml .Values.celeryBeat.resources | nindent 12 }}
+      {{- with .Values.celeryBeat.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.celeryBeat.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.celeryBeat.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

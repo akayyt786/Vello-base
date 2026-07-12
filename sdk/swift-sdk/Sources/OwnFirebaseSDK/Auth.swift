@@ -130,7 +130,7 @@ public class AuthService: OwnFirebaseClient {
   }
 
   public func verifyPhoneOTP(phoneNumber: String, code: String) async throws -> AuthTokens {
-    let body = VerifyPhoneOTPRequest(phone_number: phoneNumber, code: code)
+    let body = VerifyPhoneOTPRequest(phone_number: phoneNumber, otp_code: code)
     let tokens: AuthTokens = try await request(
       "POST",
       url: "\(config.baseUrl)/api/v1/auth/phone/verify-otp/",
@@ -151,8 +151,8 @@ public class AuthService: OwnFirebaseClient {
     )
   }
 
-  public func confirmTOTP(code: String) async throws -> MessageResponse {
-    let body = ConfirmTOTPRequest(code: code)
+  public func confirmTOTP(deviceId: String, code: String) async throws -> MessageResponse {
+    let body = ConfirmTOTPRequest(device_id: deviceId, totp_code: code)
     return try await request(
       "POST",
       url: "\(config.baseUrl)/api/v1/auth/mfa/confirm/totp/",
@@ -160,8 +160,8 @@ public class AuthService: OwnFirebaseClient {
     )
   }
 
-  public func verifyTOTP(code: String) async throws -> AuthTokens {
-    let body = VerifyTOTPRequest(code: code)
+  public func verifyTOTP(deviceId: String, code: String) async throws -> AuthTokens {
+    let body = VerifyTOTPRequest(device_id: deviceId, totp_code: code)
     let tokens: AuthTokens = try await request(
       "POST",
       url: "\(config.baseUrl)/api/v1/auth/mfa/verify/totp/",
@@ -362,20 +362,23 @@ private struct SendPhoneOTPRequest: Encodable {
 
 private struct VerifyPhoneOTPRequest: Encodable {
   let phone_number: String
-  let code: String
+  let otp_code: String
 }
 
 public struct EnrollTOTPResponse: Codable {
-  public let totp_uri: String
+  public let device_id: String
   public let secret: String
+  public let provisioning_uri: String
 }
 
 private struct ConfirmTOTPRequest: Encodable {
-  let code: String
+  let device_id: String
+  let totp_code: String
 }
 
 private struct VerifyTOTPRequest: Encodable {
-  let code: String
+  let device_id: String
+  let totp_code: String
 }
 
 private struct EnrollSMSRequest: Encodable {

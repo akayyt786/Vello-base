@@ -294,7 +294,7 @@ class TestInvokeFunctionForEvent:
     @patch('functions.tasks._OPENER.open')
     def test_invoke_success(self, mock_urlopen, db, http_function):
         mock_urlopen.return_value = self._make_mock_urlopen(200, 'ok')
-        result = fn_tasks.invoke_function_for_event(str(http_function.id), {'event': 'http'})
+        result = fn_tasks.invoke_function_for_event(str(http_function.id), {'event': 'http'}, str(http_function.project_id))
         assert result['status'] == 'success'
         log = FunctionLog.objects.filter(function=http_function).first()
         assert log is not None
@@ -303,7 +303,7 @@ class TestInvokeFunctionForEvent:
     @patch('functions.tasks._OPENER.open')
     def test_invoke_creates_log_running_then_updates(self, mock_urlopen, db, http_function):
         mock_urlopen.return_value = self._make_mock_urlopen(200, '{"result": "done"}')
-        fn_tasks.invoke_function_for_event(str(http_function.id), {'event': 'http'})
+        fn_tasks.invoke_function_for_event(str(http_function.id), {'event': 'http'}, str(http_function.project_id))
         log = FunctionLog.objects.filter(function=http_function).latest('created_at')
         assert log.status == 'success'
         assert log.response_status == 200
@@ -315,11 +315,11 @@ class TestInvokeFunctionForEvent:
             endpoint_url='https://example.com/x', is_enabled=False,
             created_by=owner, updated_by=owner,
         )
-        result = fn_tasks.invoke_function_for_event(str(disabled.id), {})
+        result = fn_tasks.invoke_function_for_event(str(disabled.id), {}, str(project.id))
         assert result['skipped'] is True
 
     def test_invoke_nonexistent_function_returns_skipped(self, db):
-        result = fn_tasks.invoke_function_for_event(str(uuid.uuid4()), {})
+        result = fn_tasks.invoke_function_for_event(str(uuid.uuid4()), {}, str(uuid.uuid4()))
         assert result['skipped'] is True
 
     @patch('functions.tasks._OPENER.open')
@@ -328,7 +328,7 @@ class TestInvokeFunctionForEvent:
             url='https://example.com/webhook', code=503, msg='Service Unavailable',
             hdrs=None, fp=MagicMock(read=lambda: b'fail'),
         )
-        result = fn_tasks.invoke_function_for_event(str(http_function.id), {'event': 'http'})
+        result = fn_tasks.invoke_function_for_event(str(http_function.id), {'event': 'http'}, str(http_function.project_id))
         assert result['status'] == 'error'
         log = FunctionLog.objects.filter(function=http_function).latest('created_at')
         assert log.status == 'error'

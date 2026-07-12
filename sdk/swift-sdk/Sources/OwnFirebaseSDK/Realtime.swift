@@ -57,10 +57,14 @@ public class RealtimeService: OwnFirebaseClient {
   public func connect() async throws {
     guard !isConnected else { return }
 
+    guard let projectId = config.projectId else {
+      throw OwnFirebaseError.missingProjectId
+    }
+
     let wsUrl = config.baseUrl
       .replacingOccurrences(of: "http://", with: "ws://")
       .replacingOccurrences(of: "https://", with: "wss://")
-      .appending("/ws/realtime/")
+      .appending("/ws/v1/projects/\(projectId)/listen/")
 
     guard let url = URL(string: wsUrl) else {
       throw OwnFirebaseError.invalidURL

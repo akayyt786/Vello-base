@@ -373,8 +373,9 @@ final class AuthServiceTests: XCTestCase {
 
   func testEnrollTOTPSuccess() async throws {
     let expectedResponse = EnrollTOTPResponse(
-      totp_uri: "otpauth://totp/test@example.com",
-      secret: "ABCD1234"
+      device_id: "device-1",
+      secret: "ABCD1234",
+      provisioning_uri: "otpauth://totp/test@example.com"
     )
 
     let jsonData = try JSONEncoder().encode(expectedResponse)
@@ -390,7 +391,8 @@ final class AuthServiceTests: XCTestCase {
     let result = try await firebase.auth.enrollTOTP()
 
     XCTAssertEqual(result.secret, "ABCD1234")
-    XCTAssertTrue(result.totp_uri.contains("otpauth"))
+    XCTAssertEqual(result.device_id, "device-1")
+    XCTAssertTrue(result.provisioning_uri.contains("otpauth"))
   }
 
   func testConfirmTOTPSuccess() async throws {
@@ -406,7 +408,7 @@ final class AuthServiceTests: XCTestCase {
     )
 
     firebase.setAccessToken("valid-token")
-    let result = try await firebase.auth.confirmTOTP(code: "123456")
+    let result = try await firebase.auth.confirmTOTP(deviceId: "device-1", code: "123456")
 
     XCTAssertEqual(result.detail, "TOTP confirmed")
   }
@@ -428,7 +430,7 @@ final class AuthServiceTests: XCTestCase {
       headerFields: nil
     )
 
-    let result = try await firebase.auth.verifyTOTP(code: "123456")
+    let result = try await firebase.auth.verifyTOTP(deviceId: "device-1", code: "123456")
 
     XCTAssertEqual(result.access, "access-token")
   }

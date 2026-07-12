@@ -216,17 +216,25 @@ public struct WriteBatchResult: Codable {
 
 public struct StorageObject: Codable {
   public let id: String
-  public let name: String
-  public let size: Int
+  public let path: String
+  public let original_name: String
   public let content_type: String
-  public let url: String
+  public let size: Int?
+  public let status: String
+  public let metadata: [String: AnyCodable]
+  public let thumbnails: [String: AnyCodable]
+  public let download_url: String?
   public let created_at: String
+  public let updated_at: String
 }
 
 public struct StorageUploadUrl: Codable {
+  public let file_id: String
   public let upload_url: String
-  public let object_key: String
-  public let expires_at: String
+  public let method: String
+  public let expires_in: Int
+  public let path: String
+  public let bucket: String
 }
 
 // MARK: - Analytics Types

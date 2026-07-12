@@ -89,9 +89,12 @@ data class StorageObject(
 )
 
 data class StorageUploadUrl(
+    val file_id: String,
     val upload_url: String,
-    val object_key: String,
-    val expires_at: String
+    val method: String,
+    val expires_in: Int,
+    val path: String,
+    val bucket: String
 )
 
 // ─── Analytics ───────────────────────────────────────────────────────────────

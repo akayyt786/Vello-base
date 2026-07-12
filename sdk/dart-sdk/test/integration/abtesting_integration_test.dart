@@ -44,7 +44,7 @@ void main() {
     });
 
     test('Experiment creation structure', () {
-      final experiment = {
+      final experiment = <String, dynamic>{
         'name': 'checkout_button_color',
         'status': 'running',
         'variants': [
@@ -66,8 +66,8 @@ void main() {
         ],
       };
       expect(experiment['variants'], hasLength(3));
-      final totalAllocation = experiment['variants']
-          .fold<int>(0, (sum, v) => sum + (v['allocation'] as int));
+      final totalAllocation = (experiment['variants'] as List)
+          .fold<int>(0, (sum, v) => sum + ((v as Map)['allocation'] as int));
       expect(totalAllocation, equals(100));
     });
 
@@ -98,7 +98,7 @@ void main() {
     });
 
     test('Assignment response structure', () {
-      final assignment = {
+      final assignment = <String, dynamic>{
         'experiment_id': 'exp-checkout-button',
         'user_id': 'user-123',
         'variant_name': 'variant_a',
@@ -127,7 +127,7 @@ void main() {
     });
 
     test('Experiment results analysis', () {
-      final results = {
+      final results = <String, dynamic>{
         'experiment_id': 'exp-123',
         'experiment_name': 'checkout_optimization',
         'status': 'completed',
@@ -179,7 +179,7 @@ void main() {
     });
 
     test('Variant configuration complexity', () {
-      final complexConfig = {
+      final complexConfig = <String, dynamic>{
         'feature_enabled': true,
         'settings': {
           'threshold': 100,

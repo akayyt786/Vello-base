@@ -41,9 +41,12 @@ class StorageServiceTest {
     @Test
     fun testGetUploadUrl() {
         val mockResponse = StorageUploadUrl(
+            file_id = "file_abc123",
             upload_url = "https://storage.example.com/upload?token=xyz",
-            object_key = "uploads/file_123.txt",
-            expires_at = "2024-01-01T13:00:00Z"
+            method = "PUT",
+            expires_in = 3600,
+            path = "uploads/file_123.txt",
+            bucket = "test-bucket"
         )
 
         mockServer.enqueue(
@@ -53,14 +56,13 @@ class StorageServiceTest {
         )
 
         val result = storageService.getUploadUrl(
-            filename = "file_123.txt",
-            contentType = "text/plain",
-            path = "uploads"
+            path = "uploads/file_123.txt",
+            contentType = "text/plain"
         )
 
         assertNotNull(result.upload_url)
-        assertEquals("uploads/file_123.txt", result.object_key)
-        assertNotNull(result.expires_at)
+        assertEquals("file_abc123", result.file_id)
+        assertEquals("uploads/file_123.txt", result.path)
 
         val request = mockServer.takeRequest()
         assertEquals("POST", request.method)

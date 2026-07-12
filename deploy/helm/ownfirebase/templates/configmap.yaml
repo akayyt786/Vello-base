@@ -1,0 +1,71 @@
+{{/*
+Non-secret application configuration, shared by web/websocket/celery-worker/
+celery-beat/migration-job via envFrom (see _helpers.tpl "ownfirebase.envFrom").
+Every key here corresponds to an os.environ.get/os.getenv() read verified in
+ownfirebase/settings.py, core/observability.py or ai/encryption.py.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ownfirebase.fullname" . }}-config
+  labels:
+    {{- include "ownfirebase.labels" . | nindent 4 }}
+data:
+  DJANGO_SETTINGS_MODULE: "ownfirebase.settings"
+  DEBUG: {{ .Values.config.debug | quote }}
+  ALLOWED_HOSTS: {{ .Values.config.allowedHosts | quote }}
+
+  # Always Postgres in this chart — SQLite isn't safe to share across
+  # multiple web/celery replicas, bundled or not.
+  USE_POSTGRES: "True"
+  DATABASE_NAME: {{ include "ownfirebase.databaseName" . | quote }}
+  DATABASE_USER: {{ include "ownfirebase.databaseUser" . | quote }}
+  DATABASE_HOST: {{ include "ownfirebase.databaseHost" . | quote }}
+  DATABASE_PORT: {{ include "ownfirebase.databasePort" . | quote }}
+  MAINTENANCE_DATABASE_USER: {{ .Values.config.maintenanceDatabaseUser | quote }}
+
+  REDIS_URL: {{ include "ownfirebase.redisUrl" . | quote }}
+
+  CORS_ALLOWED_ORIGINS: {{ .Values.config.corsAllowedOrigins | quote }}
+
+  USE_S3: {{ .Values.config.useS3 | quote }}
+  AWS_STORAGE_BUCKET_NAME: {{ .Values.config.awsStorageBucketName | quote }}
+  AWS_S3_REGION_NAME: {{ .Values.config.awsS3RegionName | quote }}
+  AWS_S3_ENDPOINT_URL: {{ include "ownfirebase.s3Endpoint" . | quote }}
+  AWS_S3_USE_SSL: {{ .Values.config.awsS3UseSSL | quote }}
+
+  EMAIL_BACKEND: {{ .Values.config.emailBackend | quote }}
+  EMAIL_HOST: {{ .Values.config.emailHost | quote }}
+  EMAIL_PORT: {{ .Values.config.emailPort | quote }}
+  EMAIL_USE_TLS: {{ .Values.config.emailUseTls | quote }}
+  EMAIL_HOST_USER: {{ .Values.config.emailHostUser | quote }}
+  DEFAULT_FROM_EMAIL: {{ .Values.config.defaultFromEmail | quote }}
+
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+
+  MAGIC_LINK_BASE_URL: {{ .Values.config.magicLinkBaseUrl | quote }}
+
+  VAPID_SUBJECT: {{ .Values.config.vapidSubject | quote }}
+  APNS_KEY_ID: {{ .Values.config.apnsKeyId | quote }}
+  APNS_TEAM_ID: {{ .Values.config.apnsTeamId | quote }}
+  APNS_BUNDLE_ID: {{ .Values.config.apnsBundleId | quote }}
+
+  GOOGLE_CLIENT_ID: {{ .Values.config.googleClientId | quote }}
+  GITHUB_CLIENT_ID: {{ .Values.config.githubClientId | quote }}
+
+  STRIPE_API_BASE: {{ .Values.config.stripeApiBase | quote }}
+  STRIPE_PRICE_STARTER: {{ .Values.config.stripePriceStarter | quote }}
+  STRIPE_PRICE_PRO: {{ .Values.config.stripePricePro | quote }}
+  STRIPE_PRICE_ENTERPRISE: {{ .Values.config.stripePriceEnterprise | quote }}
+
+  TWILIO_PHONE_NUMBER: {{ .Values.config.twilioPhoneNumber | quote }}
+
+  SENTRY_ENVIRONMENT: {{ .Values.config.sentryEnvironment | quote }}
+  SENTRY_TRACES_SAMPLE_RATE: {{ .Values.config.sentryTracesSampleRate | quote }}
+
+  {{- if .Values.postgresql.enabled }}
+  # Consumed directly by the bundled postgres Deployment (non-secret half
+  # of its credentials — POSTGRES_PASSWORD lives in the Secret instead).
+  POSTGRES_DB: {{ .Values.postgresql.auth.database | quote }}
+  POSTGRES_USER: {{ .Values.postgresql.auth.username | quote }}
+  {{- end }}

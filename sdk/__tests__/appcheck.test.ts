@@ -32,18 +32,20 @@ describe('AppCheckSDK', () => {
 
       const result = await appCheck.exchangeToken({
         provider: 'recaptcha_v3',
-        attestation: 'recaptcha-v3-token-abc123',
+        platform: 'web',
+        rawToken: 'recaptcha-v3-token-abc123',
       });
 
       expect(result).toEqual(mockResponse);
       expect(result.token).toBeDefined();
       expect(global.fetch).toHaveBeenCalledWith(
-        'http://localhost:8000/api/projects/test-project/app-check/',
+        'http://localhost:8000/api/projects/test-project/app-check/exchange/',
         expect.objectContaining({
           method: 'POST',
           body: JSON.stringify({
             provider: 'recaptcha_v3',
-            attestation: 'recaptcha-v3-token-abc123',
+            platform: 'web',
+            raw_token: 'recaptcha-v3-token-abc123',
           }),
         })
       );
@@ -67,7 +69,8 @@ describe('AppCheckSDK', () => {
 
       const result = await appCheck.exchangeToken({
         provider: 'recaptcha_enterprise',
-        attestation: 'recaptcha-enterprise-token-def456',
+        platform: 'web',
+        rawToken: 'recaptcha-enterprise-token-def456',
       });
 
       expect(result.token).toBeDefined();
@@ -91,15 +94,16 @@ describe('AppCheckSDK', () => {
 
       const result = await appCheck.exchangeToken({
         provider: 'device_check',
-        attestation: 'device-check-assertion-ghi789',
+        platform: 'ios',
+        rawToken: 'device-check-assertion-ghi789',
       });
 
       expect(result.token).toBeDefined();
     });
 
-    it('should exchange SafetyNet token', async () => {
+    it('should exchange Play Integrity token', async () => {
       const mockResponse: AppCheckToken = {
-        token: 'app-check-token-safetynet',
+        token: 'app-check-token-play-integrity',
         expires_at: '2024-01-01T01:00:00Z',
       };
 
@@ -114,8 +118,9 @@ describe('AppCheckSDK', () => {
       appCheck.setProjectId('test-project');
 
       const result = await appCheck.exchangeToken({
-        provider: 'safety_net',
-        attestation: 'safety-net-token-jkl012',
+        provider: 'play_integrity',
+        platform: 'android',
+        rawToken: 'play-integrity-token-jkl012',
       });
 
       expect(result.token).toBeDefined();
@@ -139,7 +144,8 @@ describe('AppCheckSDK', () => {
 
       const result = await appCheck.exchangeToken({
         provider: 'debug',
-        attestation: 'debug-token-mno345',
+        platform: 'web',
+        rawToken: 'debug-token-mno345',
       });
 
       expect(result.token).toBeDefined();
@@ -163,7 +169,8 @@ describe('AppCheckSDK', () => {
 
       const result = await appCheck.exchangeToken({
         provider: 'recaptcha_v3',
-        attestation: 'token123',
+        platform: 'web',
+        rawToken: 'token123',
       });
 
       expect(result.expires_at).toBeDefined();
@@ -196,12 +203,14 @@ describe('AppCheckSDK', () => {
 
       const result1 = await appCheck.exchangeToken({
         provider: 'recaptcha_v3',
-        attestation: 'attestation-1',
+        platform: 'web',
+        rawToken: 'attestation-1',
       });
 
       const result2 = await appCheck.exchangeToken({
         provider: 'recaptcha_v3',
-        attestation: 'attestation-2',
+        platform: 'web',
+        rawToken: 'attestation-2',
       });
 
       expect(result1.token).toBe('token-1');
@@ -209,19 +218,19 @@ describe('AppCheckSDK', () => {
       expect(global.fetch).toHaveBeenCalledTimes(2);
     });
 
-    it('should handle different attestation formats', async () => {
+    it('should handle different raw token formats', async () => {
       const appCheck = new AppCheckSDK(config);
       appCheck.setAccessToken('access-token');
       appCheck.setProjectId('test-project');
 
-      const attestations = [
+      const rawTokens = [
         'simple-token',
         'base64-encoded-token-xyz123==',
         'jwt-like-token.eyJhbGc.SflKxwRJSM',
         'long-attestation-string-with-many-characters-that-represent-a-valid-token-format-for-verification-purposes',
       ];
 
-      for (const attestation of attestations) {
+      for (const rawToken of rawTokens) {
         (global.fetch as jest.Mock).mockResolvedValueOnce({
           ok: true,
           status: 200,
@@ -233,7 +242,8 @@ describe('AppCheckSDK', () => {
 
         const result = await appCheck.exchangeToken({
           provider: 'recaptcha_v3',
-          attestation,
+          platform: 'web',
+          rawToken,
         });
 
         expect(result.token).toBeDefined();
@@ -245,11 +255,11 @@ describe('AppCheckSDK', () => {
 
   describe('provider support', () => {
     it('should support all attestation providers', () => {
-      const providers: Array<'recaptcha_v3' | 'recaptcha_enterprise' | 'device_check' | 'safety_net' | 'debug'> = [
+      const providers: Array<'recaptcha_v3' | 'recaptcha_enterprise' | 'play_integrity' | 'device_check' | 'debug'> = [
         'recaptcha_v3',
         'recaptcha_enterprise',
+        'play_integrity',
         'device_check',
-        'safety_net',
         'debug',
       ];
 

@@ -1,0 +1,47 @@
+{{/*
+Routes the WebSocket path prefix to the websocket Service and everything
+else to the web Service. realtime/routing.py's real WS path is
+/ws/v1/projects/{project_id}/listen/, so a /ws/ prefix rule is correct and
+sufficient. The /ws/ rule is listed first; most controllers (incl.
+ingress-nginx) resolve by longest-prefix-match regardless of rule order,
+but listing the more specific rule first keeps this readable/correct on
+controllers that do evaluate in order.
+*/}}
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "ownfirebase.fullname" . }}
+  labels:
+    {{- include "ownfirebase.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /ws/
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "ownfirebase.fullname" . }}-websocket
+                port:
+                  number: {{ .Values.websocket.service.port }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "ownfirebase.fullname" . }}-web
+                port:
+                  number: {{ .Values.web.service.port }}
+{{- end }}

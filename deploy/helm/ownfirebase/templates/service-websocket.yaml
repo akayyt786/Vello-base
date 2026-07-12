@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ownfirebase.fullname" . }}-websocket
+  labels:
+    {{- include "ownfirebase.componentLabels" (dict "context" . "component" "websocket") | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.websocket.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "ownfirebase.componentSelectorLabels" (dict "context" . "component" "websocket") | nindent 4 }}

@@ -113,6 +113,22 @@ if USE_POSTGRES:
             'CONN_MAX_AGE': 600,
         }
     }
+    # Second alias, same physical database, for bulk cross-tenant maintenance
+    # jobs (e.g. storage.tasks.cleanup_pending_uploads) that can't operate
+    # under a single tenant_context() (core/rls.py). Only added when a
+    # BYPASSRLS role is actually configured — see core/migrations/0004_postgres_rls.py
+    # for why FORCE ROW LEVEL SECURITY otherwise blocks these queries entirely.
+    MAINTENANCE_DATABASE_USER = os.getenv('MAINTENANCE_DATABASE_USER')
+    if MAINTENANCE_DATABASE_USER:
+        DATABASES['maintenance'] = {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.getenv('DATABASE_NAME', 'ownfirebase'),
+            'USER': MAINTENANCE_DATABASE_USER,
+            'PASSWORD': os.getenv('MAINTENANCE_DATABASE_PASSWORD', ''),
+            'HOST': os.getenv('DATABASE_HOST', 'localhost'),
+            'PORT': os.getenv('DATABASE_PORT', '5432'),
+            'CONN_MAX_AGE': 600,
+        }
 else:
     # Fallback to SQLite for local dev/testing
     DATABASES = {
@@ -339,6 +355,17 @@ EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.conso
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
 GITHUB_CLIENT_ID = os.environ.get('GITHUB_CLIENT_ID', '')
 GITHUB_CLIENT_SECRET = os.environ.get('GITHUB_CLIENT_SECRET', '')
+
+# Stripe billing (billing/stripe_service.py). STRIPE_API_BASE lets local dev
+# and tests point at a stripe-mock instance instead of the real Stripe API.
+STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY', '')
+STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET', '')
+STRIPE_API_BASE = os.environ.get('STRIPE_API_BASE', '')
+STRIPE_PRICE_IDS = {
+    'starter': os.environ.get('STRIPE_PRICE_STARTER', ''),
+    'pro': os.environ.get('STRIPE_PRICE_PRO', ''),
+    'enterprise': os.environ.get('STRIPE_PRICE_ENTERPRISE', ''),
+}
 
 # Sentry error tracking: no-op unless SENTRY_DSN is set in the environment.
 # Safe to call unconditionally — init_sentry() decides whether to actually

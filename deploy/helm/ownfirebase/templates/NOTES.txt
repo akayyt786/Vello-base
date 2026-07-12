@@ -1,0 +1,62 @@
+OwnFirebase has been deployed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Components:
+  - web         ({{ .Values.web.replicaCount }} replica(s))       — gunicorn/WSGI REST API
+  - websocket   ({{ .Values.websocket.replicaCount }} replica(s)) — daphne/ASGI realtime API (/ws/*)
+  - celery-worker ({{ .Values.celeryWorker.replicaCount }} replica(s))
+  - celery-beat (1 replica, always)
+{{- if .Values.pushWorker.enabled }}
+  - push-worker ({{ .Values.pushWorker.replicaCount }} replica(s))
+{{- end }}
+{{- if .Values.postgresql.enabled }}
+  - postgres (bundled, pgvector/pgvector:{{ .Values.postgresql.image.tag }})
+{{- else }}
+  - postgres: external ({{ .Values.externalDatabase.host }})
+{{- end }}
+{{- if .Values.redis.enabled }}
+  - redis (bundled)
+{{- else }}
+  - redis: external
+{{- end }}
+{{- if .Values.minio.enabled }}
+  - minio (bundled)
+{{- else }}
+  - S3: external
+{{- end }}
+
+A pre-flight migration Job ("{{ include "ownfirebase.fullname" . }}-migrate") runs
+`manage.py migrate`, `createcachetable` and `collectstatic` automatically as a
+Helm hook. Check its status with:
+
+  kubectl get jobs -n {{ .Release.Namespace }} -l app.kubernetes.io/component=migrate
+  kubectl logs -n {{ .Release.Namespace }} job/{{ include "ownfirebase.fullname" . }}-migrate
+
+{{- if .Values.ingress.enabled }}
+
+Access the API once the Ingress controller has an address:
+
+  REST API:   http{{ if .Values.ingress.tls.enabled }}s{{ end }}://{{ .Values.ingress.host }}/api/v1/
+  WebSocket:  ws{{ if .Values.ingress.tls.enabled }}s{{ end }}://{{ .Values.ingress.host }}/ws/v1/projects/<project_id>/listen/
+  Health:     http{{ if .Values.ingress.tls.enabled }}s{{ end }}://{{ .Values.ingress.host }}/health/
+  Readiness:  http{{ if .Values.ingress.tls.enabled }}s{{ end }}://{{ .Values.ingress.host }}/ready/
+
+On a local kind cluster, make sure {{ .Values.ingress.host }} resolves (e.g. an
+/etc/hosts entry pointing at the ingress controller's address) and that
+config.allowedHosts includes the same host (it does by default).
+{{- else }}
+
+Ingress is disabled. Use `kubectl port-forward` to reach the web/websocket
+Services directly, e.g.:
+
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "ownfirebase.fullname" . }}-web 8000:{{ .Values.web.service.port }}
+{{- end }}
+
+{{- if not .Values.secrets.djangoSecretKey }}
+
+WARNING: secrets.djangoSecretKey was not set — this install would have
+failed the `required` check in templates/secret.yaml unless it was provided
+via --set/-f. Double-check it's actually set if you're seeing this.
+{{- end }}
+
+See deploy/helm/ownfirebase/README.md for what to override before any real
+(non-local-kind) deployment.

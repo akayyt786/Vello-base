@@ -122,7 +122,7 @@ class FunctionInvokeView(APIView):
             'event': 'http',
             'invoker_user_id': str(request.user.id),
             'data': ser.validated_data.get('data', {}),
-        })
+        }, str(project.id))
         return Response({'task_id': result.id, 'status': 'queued'}, status=status.HTTP_202_ACCEPTED)
 
 

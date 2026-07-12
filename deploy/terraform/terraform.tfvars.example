@@ -1,0 +1,56 @@
+# terraform.tfvars.example
+#
+# Copy this to terraform.tfvars and fill in real values:
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# terraform.tfvars is git-ignored by deploy/terraform/.gitignore — it should
+# never be committed once it holds anything real. Every secret-looking value
+# below is a PLACEHOLDER; replace all of them before running `terraform
+# apply`.
+
+kube_context = "kind-ownfirebase" # matches `kind create cluster --name ownfirebase`
+namespace    = "ownfirebase"
+image_tag    = "latest"
+
+# --- secrets: PLACEHOLDERS ONLY, replace before applying --------------------
+
+# Generate a real one with:
+#   python -c "import secrets; print(secrets.token_urlsafe(50))"
+django_secret_key = "REPLACE_ME_WITH_A_GENERATED_DJANGO_SECRET_KEY"
+
+# Whatever password you want the in-cluster Postgres role to have.
+database_password = "REPLACE_ME_WITH_A_STRONG_PASSWORD"
+
+# Leave empty to keep Sentry disabled (the default) — this is normal for a
+# local kind deployment.
+sentry_dsn = ""
+
+# Anything else genuinely sensitive that doesn't have its own variable yet.
+# Keys MUST match a deploy/helm/ownfirebase/values.yaml `secrets:` field name
+# (camelCase) -- NOT the app's SCREAMING_SNAKE_CASE env var name -- see
+# variables.tf's extra_secret_env docstring. Commented out on purpose --
+# uncomment and fill in only the keys you need.
+extra_secret_env = {
+  # stripeSecretKey     = "sk_test_REPLACE_ME"
+  # stripeWebhookSecret = "whsec_REPLACE_ME"
+  # twilioAuthToken     = "REPLACE_ME"
+  # fcmServerKey        = "REPLACE_ME"
+}
+
+# --- non-sensitive knobs -----------------------------------------------------
+
+replica_counts = {
+  web           = 2
+  websocket     = 1
+  celery_worker = 2
+  celery_beat   = 1 # keep at 0 or 1 -- see variables.tf
+}
+
+enable_websocket   = true
+# false by default on purpose -- only flip to true after you've built and
+# loaded/pushed ownfirebase/push-worker:latest yourself (see values.yaml's
+# pushWorker comment for the exact build command). Leaving this true with
+# no image built leaves the pod in ImagePullBackOff forever and fails the
+# apply once helm_release's default wait/timeout is exhausted -- confirmed
+# live against a real kind cluster.
+enable_push_worker = false

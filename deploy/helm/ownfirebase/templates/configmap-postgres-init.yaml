@@ -1,0 +1,19 @@
+{{/*
+Verbatim copy of the repo-root postgres-init.sql (see files/postgres-init.sql
+in this chart), mounted into the bundled postgres container's
+/docker-entrypoint-initdb.d/ so it runs on first cluster init exactly like
+docker-compose.yml's `./postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql`
+bind mount. Enables pgvector/uuid-ossp/pg_trgm + the app_funcs schema that
+core/migrations/0004_postgres_rls.py's Row-Level-Security policies depend on.
+*/}}
+{{- if .Values.postgresql.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ownfirebase.fullname" . }}-postgres-init
+  labels:
+    {{- include "ownfirebase.componentLabels" (dict "context" . "component" "postgres") | nindent 4 }}
+data:
+  01-init.sql: |
+{{ .Files.Get "files/postgres-init.sql" | indent 4 }}
+{{- end }}

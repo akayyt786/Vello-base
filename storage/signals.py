@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 def on_storage_file_saved(sender, instance, created, **kwargs):
     if instance.status == 'confirmed' and instance.is_image:
         from storage.tasks import generate_thumbnails
-        generate_thumbnails.delay(str(instance.id))
+        generate_thumbnails.delay(str(instance.id), str(instance.project_id))
     _fire_function_triggers(
         instance,
         'storage.object.finalize' if created else 'storage.object.update',
@@ -43,6 +43,6 @@ def _fire_function_triggers(instance, event_type):
                 'path': instance.path,
                 'content_type': instance.content_type,
                 'size': instance.size,
-            })
+            }, str(instance.project_id))
     except Exception as e:
         logger.warning(f'storage signal fn trigger error: {e}')

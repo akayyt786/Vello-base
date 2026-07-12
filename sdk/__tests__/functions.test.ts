@@ -141,6 +141,14 @@ describe('FunctionsSDK', () => {
 
       expect(result.is_active).toBe(false);
       expect(result.source_code).toContain('updated');
+      // Backend only implements GET/PUT/DELETE (no PATCH) on this route; the PUT
+      // handler applies partial=True server-side so a sparse body is still safe.
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://localhost:8000/api/projects/test-project/functions/sendEmail/',
+        expect.objectContaining({
+          method: 'PUT',
+        })
+      );
     });
 
     it('should delete function', async () => {
@@ -222,7 +230,7 @@ describe('FunctionsSDK', () => {
         'http://localhost:8000/api/projects/test-project/functions/sendEmail/invoke/',
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ payload }),
+          body: JSON.stringify({ data: payload }),
         })
       );
     });

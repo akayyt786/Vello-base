@@ -5,6 +5,8 @@ Celery tasks for storage: image thumbnail generation, stale upload cleanup.
 import logging
 from celery import shared_task
 
+from core.rls import tenant_context
+
 logger = logging.getLogger(__name__)
 
 IMAGE_CONTENT_TYPES = {'image/jpeg', 'image/png', 'image/gif', 'image/webp'}
@@ -12,55 +14,56 @@ THUMBNAIL_SIZES = [(200, 200), (800, 600)]
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
-def generate_thumbnails(self, file_id):
+def generate_thumbnails(self, file_id, project_id):
     try:
         from storage.models import StorageFile
-        f = StorageFile.objects.get(id=file_id)
-        if not f.is_image or f.content_type not in IMAGE_CONTENT_TYPES:
-            return {'skipped': True, 'reason': 'not_image'}
+        with tenant_context(project_id):
+            f = StorageFile.objects.get(id=file_id)
+            if not f.is_image or f.content_type not in IMAGE_CONTENT_TYPES:
+                return {'skipped': True, 'reason': 'not_image'}
 
-        f.status = StorageFile.STATUS_PROCESSING
-        f.save(update_fields=['status', 'updated_at'])
-
-        try:
-            from PIL import Image
-        except ImportError:
-            logger.warning('Pillow not installed — skipping thumbnail generation')
-            f.status = StorageFile.STATUS_READY
+            f.status = StorageFile.STATUS_PROCESSING
             f.save(update_fields=['status', 'updated_at'])
-            return {'skipped': True, 'reason': 'pillow_not_installed'}
 
-        import io
-        from storage.s3 import get_s3_client
+            try:
+                from PIL import Image
+            except ImportError:
+                logger.warning('Pillow not installed — skipping thumbnail generation')
+                f.status = StorageFile.STATUS_READY
+                f.save(update_fields=['status', 'updated_at'])
+                return {'skipped': True, 'reason': 'pillow_not_installed'}
 
-        client = get_s3_client()
-        obj = client.get_object(Bucket=f.bucket, Key=f.path)
-        img = Image.open(io.BytesIO(obj['Body'].read()))
+            import io
+            from storage.s3 import get_s3_client
 
-        thumbnails = {}
-        for width, height in THUMBNAIL_SIZES:
-            thumb = img.copy()
-            thumb.thumbnail((width, height), Image.LANCZOS)
-            buf = io.BytesIO()
-            fmt = 'JPEG' if f.content_type == 'image/jpeg' else 'PNG'
-            thumb.save(buf, format=fmt)
-            buf.seek(0)
+            client = get_s3_client()
+            obj = client.get_object(Bucket=f.bucket, Key=f.path)
+            img = Image.open(io.BytesIO(obj['Body'].read()))
 
-            ext = f.path.rsplit('.', 1)[-1] if '.' in f.path else 'jpg'
-            base = f.path.rsplit('.', 1)[0]
-            thumb_key = f'{base}_thumb_{width}x{height}.{ext}'
-            client.put_object(
-                Bucket=f.bucket,
-                Key=thumb_key,
-                Body=buf.getvalue(),
-                ContentType=f.content_type,
-            )
-            thumbnails[f'{width}x{height}'] = thumb_key
+            thumbnails = {}
+            for width, height in THUMBNAIL_SIZES:
+                thumb = img.copy()
+                thumb.thumbnail((width, height), Image.LANCZOS)
+                buf = io.BytesIO()
+                fmt = 'JPEG' if f.content_type == 'image/jpeg' else 'PNG'
+                thumb.save(buf, format=fmt)
+                buf.seek(0)
 
-        f.thumbnails = thumbnails
-        f.status = StorageFile.STATUS_READY
-        f.save(update_fields=['thumbnails', 'status', 'updated_at'])
-        return {'thumbnails': thumbnails}
+                ext = f.path.rsplit('.', 1)[-1] if '.' in f.path else 'jpg'
+                base = f.path.rsplit('.', 1)[0]
+                thumb_key = f'{base}_thumb_{width}x{height}.{ext}'
+                client.put_object(
+                    Bucket=f.bucket,
+                    Key=thumb_key,
+                    Body=buf.getvalue(),
+                    ContentType=f.content_type,
+                )
+                thumbnails[f'{width}x{height}'] = thumb_key
+
+            f.thumbnails = thumbnails
+            f.status = StorageFile.STATUS_READY
+            f.save(update_fields=['thumbnails', 'status', 'updated_at'])
+            return {'thumbnails': thumbnails}
 
     except StorageFile.DoesNotExist:
         logger.error(f'generate_thumbnails: file {file_id} not found')
@@ -72,13 +75,24 @@ def generate_thumbnails(self, file_id):
 
 @shared_task
 def cleanup_pending_uploads():
-    """Delete StorageFile records stuck in 'pending' for over 2 hours."""
+    """
+    Delete StorageFile records stuck in 'pending' for over 2 hours.
+
+    Genuinely cross-project (scans all projects in one query), so unlike the
+    tasks above it cannot run under a single tenant_context(). Uses the
+    'maintenance' DB alias — a separate Postgres role with BYPASSRLS — when
+    configured (see ownfirebase/settings.py); falls back to 'default'
+    otherwise (SQLite dev/test, or Postgres without the role set up), where
+    FORCE RLS means it deletes nothing rather than erroring.
+    """
+    from django.conf import settings
     from django.utils import timezone
     from datetime import timedelta
     from storage.models import StorageFile
 
+    db_alias = 'maintenance' if 'maintenance' in settings.DATABASES else 'default'
     cutoff = timezone.now() - timedelta(hours=2)
-    stale = StorageFile.objects.filter(status='pending', created_at__lt=cutoff)
+    stale = StorageFile.objects.using(db_alias).filter(status='pending', created_at__lt=cutoff)
     count = stale.count()
     stale.delete()
     logger.info(f'cleanup_pending_uploads: deleted {count} stale uploads')

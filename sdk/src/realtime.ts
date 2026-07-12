@@ -69,7 +69,7 @@ export class RealtimeSDK {
 
     return new Promise((resolve, reject) => {
       try {
-        const wsUrl = `${this.baseUrl}/ws/realtime/${this.projectId}/`;
+        const wsUrl = `${this.baseUrl}/ws/v1/projects/${this.projectId}/listen/`;
         this.ws = new WebSocket(wsUrl);
 
         this.ws.onopen = () => {

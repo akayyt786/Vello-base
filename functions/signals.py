@@ -45,6 +45,6 @@ def _dispatch(project_id, collection_path, trigger_type, payload):
             is_enabled=True,
         )
         for fn in fns:
-            invoke_function_for_event.delay(str(fn.id), payload)
+            invoke_function_for_event.delay(str(fn.id), payload, str(project_id))
     except Exception as e:
         logger.warning(f'functions signal dispatch error: {e}')

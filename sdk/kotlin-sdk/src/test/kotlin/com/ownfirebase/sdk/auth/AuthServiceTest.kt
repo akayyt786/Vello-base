@@ -404,7 +404,7 @@ class AuthServiceTest {
                 .setBody(gson.toJson(mockResponse))
         )
 
-        val result = authService.confirmTOTP("123456")
+        val result = authService.confirmTOTP("device_123", "123456")
 
         assertNotNull(result["message"])
         assertNotNull(result["backup_codes"])
@@ -428,7 +428,7 @@ class AuthServiceTest {
                 .setBody(gson.toJson(mockResponse))
         )
 
-        val result = authService.verifyTOTP("654321")
+        val result = authService.verifyTOTP("device_123", "654321")
 
         assertNotNull(result.access)
         assertNotNull(result.refresh)

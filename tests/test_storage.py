@@ -503,13 +503,13 @@ class TestGenerateThumbnailsTask:
             status=StorageFile.STATUS_CONFIRMED, created_by=owner, updated_by=owner,
         )
         from storage.tasks import generate_thumbnails
-        result = generate_thumbnails(str(f.id))
+        result = generate_thumbnails(str(f.id), str(project.id))
         assert result['skipped'] is True
         assert result['reason'] == 'not_image'
 
     def test_returns_error_for_missing_file(self, db):
         from storage.tasks import generate_thumbnails
-        result = generate_thumbnails(str(uuid.uuid4()))
+        result = generate_thumbnails(str(uuid.uuid4()), str(uuid.uuid4()))
         assert result['error'] == 'not_found'
 
     @patch('storage.s3.get_s3_client')
@@ -537,7 +537,7 @@ class TestGenerateThumbnailsTask:
         with patch.dict('sys.modules', {'PIL': MagicMock(), 'PIL.Image': mock_image_module}):
             with patch('storage.tasks.Image', mock_image_module):
                 from storage.tasks import generate_thumbnails
-                result = generate_thumbnails(str(f.id))
+                result = generate_thumbnails(str(f.id), str(project.id))
 
         f.refresh_from_db()
         assert f.status in (StorageFile.STATUS_READY, StorageFile.STATUS_PROCESSING)
@@ -601,7 +601,7 @@ class TestStorageSignals:
             original_name='pic.jpg', content_type='image/jpeg',
             status=StorageFile.STATUS_CONFIRMED, created_by=owner, updated_by=owner,
         )
-        mock_thumb.delay.assert_called_once_with(str(f.id))
+        mock_thumb.delay.assert_called_once_with(str(f.id), str(project.id))
 
     @patch('storage.tasks.generate_thumbnails')
     @patch('storage.s3.delete_object')

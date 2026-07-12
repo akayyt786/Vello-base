@@ -18,23 +18,26 @@ class StorageService(config: OwnFirebaseConfig) : OwnFirebaseClient(config) {
     /**
      * Request a presigned upload URL from MinIO/S3 for direct client upload.
      *
-     * @param filename The filename for the upload
+     * @param path The full storage path for the file (e.g., "avatars/photo.png")
      * @param contentType MIME type (e.g., "image/png")
-     * @param path Optional path prefix (e.g., "avatars/", "documents/")
-     * @return Upload URL and object key
+     * @param size Optional declared file size in bytes
+     * @param metadata Optional metadata to attach to the file record
+     * @return Upload URL and file ID
      */
     fun getUploadUrl(
-        filename: String,
+        path: String,
         contentType: String,
-        path: String? = null
+        size: Long? = null,
+        metadata: Map<String, Any?>? = null
     ): StorageUploadUrl {
         return request(
             "POST",
             projectUrl("storage/upload-url/"),
             mapOf(
-                "filename" to filename,
+                "path" to path,
                 "content_type" to contentType,
-                "path" to path
+                "size" to size,
+                "metadata" to metadata
             ).filterValues { it != null }
         )
     }
@@ -42,14 +45,14 @@ class StorageService(config: OwnFirebaseConfig) : OwnFirebaseClient(config) {
     /**
      * Confirm a direct upload after the client has PUT to the presigned URL.
      *
-     * @param objectKey The object key returned from getUploadUrl
+     * @param fileId The file ID returned from getUploadUrl
      * @return The created storage object
      */
-    fun confirmUpload(objectKey: String): StorageObject {
+    fun confirmUpload(fileId: String): StorageObject {
         return request(
             "POST",
             projectUrl("storage/confirm/"),
-            mapOf("object_key" to objectKey)
+            mapOf("file_id" to fileId)
         )
     }
 
@@ -113,9 +116,10 @@ class StorageService(config: OwnFirebaseConfig) : OwnFirebaseClient(config) {
         contentType: String,
         path: String? = null
     ): StorageObject {
-        val uploadUrl = getUploadUrl(filename, contentType, path)
+        val fullPath = if (path != null) "${path.removeSuffix("/")}/$filename" else filename
+        val uploadUrl = getUploadUrl(fullPath, contentType, size = file.size.toLong())
         uploadToPresignedUrl(uploadUrl.upload_url, file, contentType)
-        return confirmUpload(uploadUrl.object_key)
+        return confirmUpload(uploadUrl.file_id)
     }
 
     /**

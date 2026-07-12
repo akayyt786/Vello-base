@@ -271,14 +271,22 @@ describe('AuthSDK', () => {
       const result = await auth.verifyPhoneOTP('+1234567890', '123456');
 
       expect(result).toEqual(mockTokens);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://localhost:8000/api/v1/auth/phone/verify-otp/',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ phone_number: '+1234567890', otp_code: '123456' }),
+        })
+      );
     });
   });
 
   describe('MFA - TOTP', () => {
     it('should enroll TOTP', async () => {
       const mockResponse = {
-        totp_uri: 'otpauth://totp/OwnFirebase:user@example.com?secret=SECRET',
+        device_id: 'device-abc123',
         secret: 'SECRET123',
+        provisioning_uri: 'otpauth://totp/OwnFirebase:user@example.com?secret=SECRET',
       };
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
@@ -306,9 +314,16 @@ describe('AuthSDK', () => {
 
       const auth = new AuthSDK(config);
       auth.setAccessToken('access-token');
-      const result = await auth.confirmTOTP('123456');
+      const result = await auth.confirmTOTP('device123', '123456');
 
       expect(result).toEqual(mockResponse);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://localhost:8000/api/v1/auth/mfa/confirm/totp/',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ device_id: 'device123', totp_code: '123456' }),
+        })
+      );
     });
 
     it('should verify TOTP code', async () => {
@@ -325,9 +340,16 @@ describe('AuthSDK', () => {
       });
 
       const auth = new AuthSDK(config);
-      const result = await auth.verifyTOTP('123456');
+      const result = await auth.verifyTOTP('device123', '123456');
 
       expect(result).toEqual(mockTokens);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://localhost:8000/api/v1/auth/mfa/verify/totp/',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ device_id: 'device123', totp_code: '123456' }),
+        })
+      );
     });
   });
 

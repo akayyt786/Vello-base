@@ -45,6 +45,7 @@ class AdvancedAuthFlowTest {
     fun testTOTPEnrollmentFlow() {
         // Step 1: Enroll TOTP
         val enrollResponse = mapOf(
+            "device_id" to "totp_device_123",
             "secret" to "JBSWY3DPEBLW64TMMQ======",
             "qr_code_url" to "https://example.com/qr.png"
         )
@@ -55,6 +56,7 @@ class AdvancedAuthFlowTest {
 
         val enrollResult = authService.enrollTOTP()
         assertNotNull(enrollResult["secret"])
+        val deviceId = enrollResult["device_id"]!!
 
         // Step 2: Confirm TOTP
         val confirmResponse = mapOf(
@@ -66,7 +68,7 @@ class AdvancedAuthFlowTest {
             .setResponseCode(200)
             .setBody(gson.toJson(confirmResponse)))
 
-        val confirmResult = authService.confirmTOTP("123456")
+        val confirmResult = authService.confirmTOTP(deviceId, "123456")
         assertNotNull(confirmResult["backup_codes"])
 
         // Step 3: Later, verify TOTP during login
@@ -80,7 +82,7 @@ class AdvancedAuthFlowTest {
             .setResponseCode(200)
             .setBody(gson.toJson(verifyResponse)))
 
-        val verifyResult = authService.verifyTOTP("654321")
+        val verifyResult = authService.verifyTOTP(deviceId, "654321")
         assertNotNull(verifyResult.access)
     }
 

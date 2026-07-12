@@ -108,7 +108,7 @@ void main() {
     });
 
     test('Conversion recording structure', () {
-      final conversionData = {
+      final conversionData = <String, dynamic>{
         'user_id': 'user-123',
         'metadata': {
           'amount': 99.99,
@@ -121,7 +121,7 @@ void main() {
     });
 
     test('Experiment results structure', () {
-      final results = {
+      final results = <String, dynamic>{
         'experiment_id': 'exp-1',
         'variants': {
           'control': {

@@ -158,7 +158,7 @@ class RealtimeListener(
         val cleanUrl = baseUrl.removeSuffix("/").removePrefix("http://").removePrefix("https://")
         val wsUrl = if (baseUrl.contains("https")) "wss://" else "ws://"
         val pid = projectId ?: throw IllegalStateException("projectId required for realtime")
-        return "$wsUrl$cleanUrl/api/projects/$pid/realtime"
+        return "$wsUrl$cleanUrl/ws/v1/projects/$pid/listen/"
     }
 
     private fun sendMessage(message: Map<String, Any?>) {

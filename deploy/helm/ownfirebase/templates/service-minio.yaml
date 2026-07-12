@@ -1,0 +1,21 @@
+{{- if .Values.minio.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ownfirebase.fullname" . }}-minio
+  labels:
+    {{- include "ownfirebase.componentLabels" (dict "context" . "component" "minio") | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: api
+      port: {{ .Values.minio.service.apiPort }}
+      targetPort: api
+      protocol: TCP
+    - name: console
+      port: {{ .Values.minio.service.consolePort }}
+      targetPort: console
+      protocol: TCP
+  selector:
+    {{- include "ownfirebase.componentSelectorLabels" (dict "context" . "component" "minio") | nindent 4 }}
+{{- end }}

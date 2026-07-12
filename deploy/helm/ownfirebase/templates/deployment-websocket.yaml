@@ -1,0 +1,87 @@
+{{/*
+websocket: daphne (ASGI) — realtime/WebSocket API (realtime/routing.py:
+/ws/v1/projects/{project_id}/listen/). This is the fix for the
+docker-compose.prod.yml gap: prod compose swaps django to gunicorn/WSGI and
+never runs a second ASGI process, so WebSocket silently never works in a
+compose-based prod deploy. Same image as `web`, different entrypoint
+command, own Deployment/Service, routed to by Ingress on the /ws/ prefix.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ownfirebase.fullname" . }}-websocket
+  labels:
+    {{- include "ownfirebase.componentLabels" (dict "context" . "component" "websocket") | nindent 4 }}
+spec:
+  replicas: {{ .Values.websocket.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "ownfirebase.componentSelectorLabels" (dict "context" . "component" "websocket") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ownfirebase.componentSelectorLabels" (dict "context" . "component" "websocket") | nindent 8 }}
+      {{- with .Values.websocket.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "ownfirebase.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        {{- include "ownfirebase.waitForDeps" . | nindent 8 }}
+      containers:
+        - name: websocket
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - daphne
+            - -b
+            - "0.0.0.0"
+            - -p
+            - "8000"
+            - ownfirebase.asgi:application
+          ports:
+            - name: http
+              containerPort: 8000
+          {{- include "ownfirebase.envFrom" . | nindent 10 }}
+          livenessProbe:
+            httpGet:
+              path: /health/
+              port: http
+              # See deployment-web.yaml's livenessProbe comment: kubelet's
+              # httpGet probe hits the pod IP directly, which Django's
+              # ALLOWED_HOSTS rejects unless pinned via a Host header.
+              httpHeaders:
+                - name: Host
+                  value: {{ .Values.ingress.host }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /ready/
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: {{ .Values.ingress.host }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.websocket.resources | nindent 12 }}
+      {{- with .Values.websocket.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.websocket.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.websocket.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

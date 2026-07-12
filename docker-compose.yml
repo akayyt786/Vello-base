@@ -9,7 +9,6 @@ services:
       POSTGRES_DB: ${DATABASE_NAME:-ownfirebase}
       POSTGRES_USER: ${DATABASE_USER:-postgres}
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
-      POSTGRES_INITDB_ARGS: "-c rls=on"
     ports:
       - "5432:5432"
     volumes:

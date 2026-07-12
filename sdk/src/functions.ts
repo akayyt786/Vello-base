@@ -20,7 +20,10 @@ export class FunctionsSDK extends OwnFirebaseClient {
     name: string,
     updates: Partial<Omit<FunctionDefinition, 'id' | 'name'>>
   ): Promise<FunctionDefinition> {
-    return this.request('PATCH', this.projectUrl(`functions/${name}/`), updates);
+    // Backend only implements GET/PUT/DELETE on this route (no PATCH), but the
+    // PUT handler applies the serializer with partial=True, so a sparse body
+    // here is safe — it behaves like a partial update despite the verb.
+    return this.request('PUT', this.projectUrl(`functions/${name}/`), updates);
   }
 
   async deleteFunction(name: string): Promise<void> {
@@ -32,7 +35,7 @@ export class FunctionsSDK extends OwnFirebaseClient {
     payload?: Record<string, unknown>
   ): Promise<FunctionInvocation> {
     return this.request('POST', this.projectUrl(`functions/${name}/invoke/`), {
-      payload: payload ?? {},
+      data: payload ?? {},
     });
   }
 

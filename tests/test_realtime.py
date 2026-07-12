@@ -418,3 +418,90 @@ class TestRouting:
         from realtime.consumers import RealtimeConsumer
         route = websocket_urlpatterns[0]
         assert route.callback is not None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Integration: JWT auth bridge (realtime/auth_middleware.py)
+#
+# Unlike TestRealtimeConsumerConnect above (which wraps the bare consumer and
+# injects scope['user'] directly, bypassing auth entirely), these tests wrap
+# the real ASGI stack — JWTAuthMiddlewareStack(URLRouter(...)) — the same
+# composition used in ownfirebase/asgi.py, so they exercise the actual token
+# parsing and validation an API client depends on.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestJWTWebSocketAuth:
+    def _app(self):
+        from channels.routing import URLRouter
+        from realtime.auth_middleware import JWTAuthMiddlewareStack
+        from realtime.routing import websocket_urlpatterns
+        return JWTAuthMiddlewareStack(URLRouter(websocket_urlpatterns))
+
+    async def test_valid_token_authenticates_and_connects(self):
+        from channels.testing import WebsocketCommunicator
+        from rest_framework_simplejwt.tokens import RefreshToken
+        from core.models import Project, ProjectMembership
+
+        user = await database_sync_to_async(make_user)('jwt_ws_valid@test.com')
+        project = await database_sync_to_async(Project.objects.create)(
+            name='JWT WS Project', slug='jwt-ws-project', owner=user, is_active=True,
+        )
+        await database_sync_to_async(ProjectMembership.objects.create)(
+            project=project, user=user, role='owner',
+        )
+        access = await database_sync_to_async(
+            lambda: str(RefreshToken.for_user(user).access_token)
+        )()
+
+        communicator = WebsocketCommunicator(
+            self._app(), f'/ws/v1/projects/{project.id}/listen/?token={access}'
+        )
+        connected, _ = await communicator.connect()
+        assert connected is True
+        await communicator.disconnect()
+
+    async def test_missing_token_falls_back_to_anonymous_and_closes(self):
+        from channels.testing import WebsocketCommunicator
+
+        communicator = WebsocketCommunicator(
+            self._app(), '/ws/v1/projects/some-project/listen/'
+        )
+        connected, code = await communicator.connect()
+        assert not connected or code == 4401
+
+    async def test_invalid_token_falls_back_to_anonymous_and_closes(self):
+        from channels.testing import WebsocketCommunicator
+
+        communicator = WebsocketCommunicator(
+            self._app(), '/ws/v1/projects/some-project/listen/?token=not-a-real-jwt'
+        )
+        connected, code = await communicator.connect()
+        assert not connected or code == 4401
+
+    async def test_blacklisted_token_falls_back_to_anonymous_and_closes(self):
+        from channels.testing import WebsocketCommunicator
+        from rest_framework_simplejwt.tokens import RefreshToken
+        from jwt import decode as jwt_decode
+        from django.conf import settings
+        from core.models import RefreshTokenBlacklist
+
+        user = await database_sync_to_async(make_user)('jwt_ws_blacklisted@test.com')
+        access_token = await database_sync_to_async(
+            lambda: RefreshToken.for_user(user).access_token
+        )()
+        decoded = jwt_decode(
+            str(access_token), settings.SIMPLE_JWT['SIGNING_KEY'], algorithms=['HS256']
+        )
+        from datetime import datetime, timezone as dt_timezone
+        await database_sync_to_async(RefreshTokenBlacklist.objects.create)(
+            jti=decoded['jti'], user=user,
+            expires_at=datetime.fromtimestamp(decoded['exp'], tz=dt_timezone.utc),
+        )
+
+        communicator = WebsocketCommunicator(
+            self._app(), f'/ws/v1/projects/some-project/listen/?token={access_token}'
+        )
+        connected, code = await communicator.connect()
+        assert not connected or code == 4401

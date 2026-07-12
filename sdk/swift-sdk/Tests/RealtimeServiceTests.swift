@@ -77,8 +77,9 @@ final class RealtimeServiceTests: XCTestCase {
   // MARK: - URL Construction Tests
 
   func testRealtimeURLConstruction() {
-    let url = "http://localhost:8000/ws/realtime/"
-    XCTAssertTrue(url.contains("/ws/realtime/"))
+    let projectId = "test-project"
+    let url = "http://localhost:8000/ws/v1/projects/\(projectId)/listen/"
+    XCTAssertTrue(url.contains("/ws/v1/projects/test-project/listen/"))
   }
 
   func testWebSocketURLProtocolSwitch() {

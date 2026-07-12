@@ -162,11 +162,11 @@ class AuthService(config: OwnFirebaseConfig) : OwnFirebaseClient(config) {
     /**
      * Verify phone OTP and sign in.
      */
-    fun verifyPhoneOTP(phoneNumber: String, code: String): AuthTokens {
+    fun verifyPhoneOTP(phoneNumber: String, otpCode: String): AuthTokens {
         return request(
             "POST",
             "$baseUrl/api/v1/auth/phone/verify-otp/",
-            mapOf("phone_number" to phoneNumber, "code" to code),
+            mapOf("phone_number" to phoneNumber, "otp_code" to otpCode),
             RequestOptions(noAuth = true)
         )
     }
@@ -186,23 +186,29 @@ class AuthService(config: OwnFirebaseConfig) : OwnFirebaseClient(config) {
 
     /**
      * Confirm TOTP enrollment with code.
+     *
+     * @param deviceId The UUID of the TOTP device returned by [enrollTOTP]
+     * @param totpCode The 6-digit code from the authenticator app
      */
-    fun confirmTOTP(code: String): Map<String, String> {
+    fun confirmTOTP(deviceId: String, totpCode: String): Map<String, String> {
         return request(
             "POST",
             "$baseUrl/api/v1/auth/mfa/confirm/totp/",
-            mapOf("code" to code)
+            mapOf("device_id" to deviceId, "totp_code" to totpCode)
         )
     }
 
     /**
      * Verify TOTP code during login.
+     *
+     * @param deviceId The UUID of the TOTP device
+     * @param totpCode The 6-digit code from the authenticator app
      */
-    fun verifyTOTP(code: String): AuthTokens {
+    fun verifyTOTP(deviceId: String, totpCode: String): AuthTokens {
         return request(
             "POST",
             "$baseUrl/api/v1/auth/mfa/verify/totp/",
-            mapOf("code" to code)
+            mapOf("device_id" to deviceId, "totp_code" to totpCode)
         )
     }
 

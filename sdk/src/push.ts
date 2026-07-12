@@ -18,12 +18,19 @@ export interface PushNotificationRecord {
   recipient_count: number;
 }
 
+export interface PushTopicSubscription {
+  id: string;
+  topic: string;
+  device_token: string;
+  created_at: string;
+}
+
 export class PushSDK extends OwnFirebaseClient {
   // ─── Device Tokens ───────────────────────────────────────────────────────────
 
   async registerToken(
     token: string,
-    platform: 'ios' | 'android' | 'web'
+    platform: 'fcm' | 'apns' | 'web'
   ): Promise<PushDeviceToken> {
     return this.request('POST', this.projectUrl('push/tokens/'), {
       token,
@@ -49,11 +56,14 @@ export class PushSDK extends OwnFirebaseClient {
     return this.request('POST', this.projectUrl('push/topics/'), { name });
   }
 
-  async subscribeTopic(topicId: string): Promise<{ detail: string }> {
+  async subscribeTopic(
+    topicId: string,
+    deviceTokenId: string
+  ): Promise<PushTopicSubscription> {
     return this.request(
       'POST',
-      this.projectUrl(`push/topics/${topicId}/`),
-      { action: 'subscribe' }
+      this.projectUrl(`push/topics/${topicId}/subscribe/`),
+      { device_token_id: deviceTokenId }
     );
   }
 
@@ -64,8 +74,7 @@ export class PushSDK extends OwnFirebaseClient {
     notification: PushNotificationPayload
   ): Promise<PushNotificationRecord> {
     return this.request('POST', this.projectUrl('push/notifications/'), {
-      target_type: 'device',
-      target_id: tokenId,
+      device_token: tokenId,
       ...notification,
     });
   }
@@ -75,8 +84,7 @@ export class PushSDK extends OwnFirebaseClient {
     notification: PushNotificationPayload
   ): Promise<PushNotificationRecord> {
     return this.request('POST', this.projectUrl('push/notifications/'), {
-      target_type: 'topic',
-      target_id: topicId,
+      topic: topicId,
       ...notification,
     });
   }

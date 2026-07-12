@@ -60,7 +60,7 @@ void main() {
     });
 
     test('Notification payload structure', () {
-      final payload = {
+      final payload = <String, dynamic>{
         'title': 'Hello',
         'body': 'World',
         'data': {
@@ -74,12 +74,13 @@ void main() {
     });
 
     test('Topic subscription structure', () {
-      final subscription = {
-        'token_id': 'token-123',
-        'topic': 'news',
+      // Matches push/views.py's TopicViewSet.subscribe: the topic id is part
+      // of the URL path (push/topics/{topicId}/subscribe/) and the body
+      // carries only device_token_id.
+      final subscriptionBody = {
+        'device_token_id': 'token-123',
       };
-      expect(subscription['token_id'], equals('token-123'));
-      expect(subscription['topic'], equals('news'));
+      expect(subscriptionBody['device_token_id'], equals('token-123'));
     });
 
     test('Multiple topics support', () {
@@ -101,27 +102,27 @@ void main() {
     });
 
     test('Send to device payload', () {
+      // Matches push/serializers.py's PushNotificationSerializer: device_token
+      // plus flat title/body fields, posted to push/notifications/ — no
+      // nested 'payload' wrapper and no separate send-to-device endpoint.
       final sendPayload = {
-        'token_id': 'token-123',
-        'payload': {
-          'title': 'Test',
-          'body': 'Message',
-        },
+        'device_token': 'token-123',
+        'title': 'Test',
+        'body': 'Message',
       };
-      expect(sendPayload['token_id'], isNotNull);
-      expect(sendPayload['payload'], isNotNull);
+      expect(sendPayload['device_token'], isNotNull);
+      expect(sendPayload['title'], equals('Test'));
+      expect(sendPayload['body'], equals('Message'));
     });
 
     test('Send to topic payload', () {
-      final sendPayload = {
+      final sendPayload = <String, dynamic>{
         'topic': 'news',
-        'payload': {
-          'title': 'Breaking News',
-          'body': 'Important update',
-        },
+        'title': 'Breaking News',
+        'body': 'Important update',
       };
       expect(sendPayload['topic'], equals('news'));
-      expect(sendPayload['payload']['title'], equals('Breaking News'));
+      expect(sendPayload['title'], equals('Breaking News'));
     });
 
     test('List tokens paginated response', () {
@@ -149,7 +150,7 @@ void main() {
     });
 
     test('Rich notification with custom data', () {
-      final richPayload = {
+      final richPayload = <String, dynamic>{
         'title': 'Purchase Confirmation',
         'body': 'Order #12345 has shipped',
         'data': {

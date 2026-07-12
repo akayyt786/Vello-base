@@ -4,14 +4,16 @@ public class StorageService: OwnFirebaseClient {
   // MARK: - Upload URL Management
 
   public func getUploadUrl(
-    filename: String,
-    contentType: String,
-    path: String? = nil
+    path: String,
+    contentType: String = "application/octet-stream",
+    size: Int? = nil,
+    metadata: [String: AnyCodable]? = nil
   ) async throws -> StorageUploadUrl {
     let body = GetUploadUrlRequest(
-      filename: filename,
+      path: path,
       content_type: contentType,
-      path: path
+      size: size,
+      metadata: metadata
     )
     return try await request(
       "POST",
@@ -20,8 +22,8 @@ public class StorageService: OwnFirebaseClient {
     )
   }
 
-  public func confirmUpload(objectKey: String) async throws -> StorageObject {
-    let body = ConfirmUploadRequest(object_key: objectKey)
+  public func confirmUpload(fileId: String) async throws -> StorageObject {
+    let body = ConfirmUploadRequest(file_id: fileId)
     return try await request(
       "POST",
       url: projectUrl("storage/confirm/"),
@@ -62,15 +64,16 @@ public class StorageService: OwnFirebaseClient {
 
   public func upload(
     data: Data,
-    filename: String,
-    contentType: String,
-    path: String? = nil
+    path: String,
+    contentType: String = "application/octet-stream",
+    metadata: [String: AnyCodable]? = nil
   ) async throws -> StorageObject {
     // Get upload URL
     let uploadUrlResponse = try await getUploadUrl(
-      filename: filename,
+      path: path,
       contentType: contentType,
-      path: path
+      size: data.count,
+      metadata: metadata
     )
 
     // Upload file to presigned URL
@@ -81,7 +84,7 @@ public class StorageService: OwnFirebaseClient {
     )
 
     // Confirm upload
-    return try await confirmUpload(objectKey: uploadUrlResponse.object_key)
+    return try await confirmUpload(fileId: uploadUrlResponse.file_id)
   }
 
   private func uploadToPresignedUrl(
@@ -145,11 +148,12 @@ public class StorageService: OwnFirebaseClient {
 // MARK: - Request Types
 
 private struct GetUploadUrlRequest: Encodable {
-  let filename: String
+  let path: String
   let content_type: String
-  let path: String?
+  let size: Int?
+  let metadata: [String: AnyCodable]?
 }
 
 private struct ConfirmUploadRequest: Encodable {
-  let object_key: String
+  let file_id: String
 }

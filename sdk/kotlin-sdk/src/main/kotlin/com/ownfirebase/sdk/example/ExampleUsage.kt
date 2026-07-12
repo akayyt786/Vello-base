@@ -330,14 +330,15 @@ fun exampleMFASetup(sdk: OwnFirebase) {
 
     // Enroll in TOTP
     val totpSetup = sdk.auth().enrollTOTP()
+    val deviceId = totpSetup["device_id"]!!
     println("TOTP URI: ${totpSetup["totp_uri"]}")
     println("Secret: ${totpSetup["secret"]}")
 
     // Confirm enrollment with TOTP code from authenticator app
-    val confirmResult = sdk.auth().confirmTOTP("123456")
+    val confirmResult = sdk.auth().confirmTOTP(deviceId, "123456")
     println("TOTP confirmed")
 
     // At next login, user would verify TOTP:
     // val tokens = sdk.auth().login("user@example.com", "password")
-    // val totpTokens = sdk.auth().verifyTOTP("654321") // TOTP code from app
+    // val totpTokens = sdk.auth().verifyTOTP(deviceId, "654321") // TOTP code from app
 }

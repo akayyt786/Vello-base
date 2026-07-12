@@ -1,0 +1,93 @@
+{{/*
+web: gunicorn (WSGI) REST API. Mirrors docker-compose.prod.yml's django
+command, minus migrate/collectstatic (handled by the migration-job hook,
+not per-pod, so it doesn't race across replicas).
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ownfirebase.fullname" . }}-web
+  labels:
+    {{- include "ownfirebase.componentLabels" (dict "context" . "component" "web") | nindent 4 }}
+spec:
+  replicas: {{ .Values.web.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "ownfirebase.componentSelectorLabels" (dict "context" . "component" "web") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ownfirebase.componentSelectorLabels" (dict "context" . "component" "web") | nindent 8 }}
+      {{- with .Values.web.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "ownfirebase.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        {{- include "ownfirebase.waitForDeps" . | nindent 8 }}
+      containers:
+        - name: web
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - gunicorn
+            - ownfirebase.wsgi:application
+            - -b
+            - "0.0.0.0:8000"
+            - -w
+            - {{ .Values.web.gunicornWorkers | quote }}
+            - --timeout
+            - "120"
+            - --access-logfile
+            - "-"
+          ports:
+            - name: http
+              containerPort: 8000
+          {{- include "ownfirebase.envFrom" . | nindent 10 }}
+          livenessProbe:
+            httpGet:
+              path: /health/
+              port: http
+              # kubelet's httpGet probe hits the pod IP directly with that
+              # IP as the Host header (e.g. "10.244.0.35:8000") — Django's
+              # ALLOWED_HOSTS rejects that with a 400 (DisallowedHost),
+              # which kubelet counts as a probe failure and kills the
+              # container in a loop. Pin the Host header to a value that's
+              # already in config.allowedHosts instead (confirmed live: the
+              # unpinned probe crash-looped every web/websocket pod during
+              # this chart's kind verification).
+              httpHeaders:
+                - name: Host
+                  value: {{ .Values.ingress.host }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /ready/
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: {{ .Values.ingress.host }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}
+      {{- with .Values.web.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.web.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.web.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

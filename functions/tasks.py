@@ -9,6 +9,8 @@ import urllib.request
 import urllib.error
 from celery import shared_task
 
+from core.rls import tenant_context
+
 logger = logging.getLogger(__name__)
 
 
@@ -68,45 +70,52 @@ def _post_webhook(url, payload, timeout, secret='', extra_headers=None):
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
-def invoke_function_for_event(self, function_id, trigger_data):
+def invoke_function_for_event(self, function_id, trigger_data, project_id):
     from functions.models import CloudFunction, FunctionLog
-    try:
-        fn = CloudFunction.objects.get(id=function_id, is_enabled=True)
-    except CloudFunction.DoesNotExist:
-        return {'skipped': True, 'reason': 'function_not_found_or_disabled'}
 
-    log = FunctionLog.objects.create(
-        function=fn,
-        trigger_data=trigger_data,
-        status=FunctionLog.STATUS_RUNNING,
-    )
+    # self.retry() below raises, which would roll back an enclosing atomic
+    # block — so the retry is raised *after* tenant_context() (and its
+    # transaction) has already exited and committed the log write.
+    with tenant_context(project_id):
+        try:
+            fn = CloudFunction.objects.get(id=function_id, is_enabled=True)
+        except CloudFunction.DoesNotExist:
+            return {'skipped': True, 'reason': 'function_not_found_or_disabled'}
 
-    result = _post_webhook(
-        fn.endpoint_url, trigger_data, fn.timeout_seconds,
-        fn.secret_header, fn.extra_headers,
-    )
+        log = FunctionLog.objects.create(
+            function=fn,
+            trigger_data=trigger_data,
+            status=FunctionLog.STATUS_RUNNING,
+        )
 
-    # Persist per-attempt diagnostics regardless of retry outcome.
-    log.response_status = result.get('response_status')
-    log.response_body = result.get('response_body', '')
-    log.duration_ms = result.get('duration_ms')
-    log.error = result.get('error', '')
+        result = _post_webhook(
+            fn.endpoint_url, trigger_data, fn.timeout_seconds,
+            fn.secret_header, fn.extra_headers,
+        )
 
-    # Retry on both 'error' and 'timeout' outcomes — not just 'error'.
-    will_retry = (
-        result['status'] in ('error', 'timeout')
-        and fn.retry_count > 0
-        and self.request.retries < fn.retry_count
-    )
+        # Persist per-attempt diagnostics regardless of retry outcome.
+        log.response_status = result.get('response_status')
+        log.response_body = result.get('response_body', '')
+        log.duration_ms = result.get('duration_ms')
+        log.error = result.get('error', '')
+
+        # Retry on both 'error' and 'timeout' outcomes — not just 'error'.
+        will_retry = (
+            result['status'] in ('error', 'timeout')
+            and fn.retry_count > 0
+            and self.request.retries < fn.retry_count
+        )
+
+        if will_retry:
+            # Keep log.status = STATUS_RUNNING so the record correctly reflects
+            # that this attempt is not the final outcome.  STATUS_ERROR/TIMEOUT is
+            # only set once all retries are exhausted.
+            log.save(update_fields=['response_status', 'response_body', 'duration_ms', 'error'])
+        else:
+            # Final outcome (success, or all retries exhausted).
+            log.status = result['status']
+            log.save(update_fields=['status', 'response_status', 'response_body', 'duration_ms', 'error'])
 
     if will_retry:
-        # Keep log.status = STATUS_RUNNING so the record correctly reflects
-        # that this attempt is not the final outcome.  STATUS_ERROR/TIMEOUT is
-        # only set once all retries are exhausted.
-        log.save(update_fields=['response_status', 'response_body', 'duration_ms', 'error'])
         raise self.retry(countdown=60 * (self.request.retries + 1))
-
-    # Final outcome (success, or all retries exhausted).
-    log.status = result['status']
-    log.save(update_fields=['status', 'response_status', 'response_body', 'duration_ms', 'error'])
     return result

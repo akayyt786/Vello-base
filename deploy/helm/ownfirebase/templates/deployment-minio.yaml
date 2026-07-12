@@ -1,0 +1,75 @@
+{{/*
+Bundled single-replica MinIO (S3-compatible storage for the storage/ app).
+`args` (not `command`) carries the compose command's `server /data
+--console-address ":9001"` since the minio image's own ENTRYPOINT already
+execs `minio "$@"` — mirroring how docker-compose's `command:` field
+overrides CMD, not ENTRYPOINT.
+*/}}
+{{- if .Values.minio.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ownfirebase.fullname" . }}-minio
+  labels:
+    {{- include "ownfirebase.componentLabels" (dict "context" . "component" "minio") | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "ownfirebase.componentSelectorLabels" (dict "context" . "component" "minio") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ownfirebase.componentSelectorLabels" (dict "context" . "component" "minio") | nindent 8 }}
+    spec:
+      containers:
+        - name: minio
+          image: "{{ .Values.minio.image.repository }}:{{ .Values.minio.image.tag }}"
+          imagePullPolicy: {{ .Values.minio.image.pullPolicy }}
+          args:
+            - server
+            - /data
+            - --console-address
+            - ":9001"
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ownfirebase.fullname" . }}-secrets
+                  key: MINIO_ROOT_USER
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ownfirebase.fullname" . }}-secrets
+                  key: MINIO_ROOT_PASSWORD
+          ports:
+            - name: api
+              containerPort: 9000
+            - name: console
+              containerPort: 9001
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: api
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: api
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.minio.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "ownfirebase.fullname" . }}-minio
+{{- end }}

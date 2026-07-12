@@ -1,0 +1,21 @@
+apiVersion: v2
+name: ownfirebase
+description: >-
+  OwnFirebase — a self-hosted Firebase alternative (Django + Celery + Django
+  Channels) — packaged for Kubernetes. Runs the REST API (gunicorn/WSGI), the
+  WebSocket/realtime API (daphne/ASGI) as separate deployments behind one
+  Ingress, Celery worker + beat for background/scheduled jobs, and optional
+  bundled Postgres (pgvector), Redis and MinIO datastores.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - firebase
+  - django
+  - celery
+  - channels
+  - websocket
+  - postgres
+  - pgvector
+maintainers:
+  - name: ownfirebase

@@ -7,7 +7,7 @@ from django.contrib import admin
 from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 from enhanced_auth.views import IssueCustomTokenView
-from billing.views import TiersView
+from billing.views import TiersView, StripeWebhookView
 from core.health import liveness, readiness
 
 urlpatterns = [
@@ -74,6 +74,10 @@ urlpatterns = [
 
     # Billing tiers (public, no project scope)
     path('api/billing/tiers/', TiersView.as_view(), name='billing-tiers'),
+
+    # Stripe webhook (global — Stripe has no notion of project_id; the event
+    # payload/metadata identifies which project it applies to)
+    path('api/billing/webhook/', StripeWebhookView.as_view(), name='billing-webhook'),
 
     # Remote Config Parameters API (simple key/value store)
     path('api/projects/<uuid:project_id>/remoteconfig/', include('remoteconfig.urls', namespace='remoteconfig_params')),

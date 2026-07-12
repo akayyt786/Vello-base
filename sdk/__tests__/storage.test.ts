@@ -16,9 +16,12 @@ describe('StorageSDK', () => {
   describe('upload operations', () => {
     it('should get upload URL', async () => {
       const mockResponse: StorageUploadUrl = {
+        file_id: 'file-123',
         upload_url: 'https://minio.example.com/upload-presigned-url?token=abc123',
-        object_key: 'uploads/file-123/document.pdf',
-        expires_at: '2024-01-01T01:00:00Z',
+        method: 'PUT',
+        expires_in: 3600,
+        path: 'document.pdf',
+        bucket: 'test-project-bucket',
       };
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
@@ -32,7 +35,7 @@ describe('StorageSDK', () => {
       storage.setProjectId('test-project');
 
       const result = await storage.getUploadUrl({
-        filename: 'document.pdf',
+        path: 'document.pdf',
         contentType: 'application/pdf',
       });
 
@@ -42,19 +45,23 @@ describe('StorageSDK', () => {
         expect.objectContaining({
           method: 'POST',
           body: JSON.stringify({
-            filename: 'document.pdf',
+            path: 'document.pdf',
             content_type: 'application/pdf',
-            path: undefined,
+            size: undefined,
+            metadata: undefined,
           }),
         })
       );
     });
 
-    it('should get upload URL with path', async () => {
+    it('should get upload URL with nested path', async () => {
       const mockResponse: StorageUploadUrl = {
+        file_id: 'file-456',
         upload_url: 'https://minio.example.com/upload-presigned-url?token=xyz789',
-        object_key: 'user-123/documents/file-456/report.pdf',
-        expires_at: '2024-01-01T01:00:00Z',
+        method: 'PUT',
+        expires_in: 3600,
+        path: 'user-123/documents/report.pdf',
+        bucket: 'test-project-bucket',
       };
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
@@ -68,12 +75,11 @@ describe('StorageSDK', () => {
       storage.setProjectId('test-project');
 
       const result = await storage.getUploadUrl({
-        filename: 'report.pdf',
+        path: 'user-123/documents/report.pdf',
         contentType: 'application/pdf',
-        path: 'user-123/documents',
       });
 
-      expect(result.object_key).toContain('user-123/documents');
+      expect(result.path).toContain('user-123/documents');
     });
 
     it('should confirm upload', async () => {
@@ -96,16 +102,26 @@ describe('StorageSDK', () => {
       storage.setAccessToken('access-token');
       storage.setProjectId('test-project');
 
-      const result = await storage.confirmUpload('uploads/file-123/document.pdf');
+      const result = await storage.confirmUpload('file-123');
 
       expect(result).toEqual(mockFile);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://localhost:8000/api/projects/test-project/storage/confirm/',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ file_id: 'file-123' }),
+        })
+      );
     });
 
     it('should upload file with helper method', async () => {
       const mockUploadUrl: StorageUploadUrl = {
+        file_id: 'file-123',
         upload_url: 'https://minio.example.com/upload?token=abc123',
-        object_key: 'uploads/file-123/photo.jpg',
-        expires_at: '2024-01-01T01:00:00Z',
+        method: 'PUT',
+        expires_in: 3600,
+        path: 'uploads/photo.jpg',
+        bucket: 'test-project-bucket',
       };
 
       const mockFile: StorageObject = {
@@ -143,7 +159,7 @@ describe('StorageSDK', () => {
 
       const fileBlob = new Blob(['photo data'], { type: 'image/jpeg' });
       const result = await storage.upload(fileBlob, {
-        filename: 'photo.jpg',
+        path: 'uploads/photo.jpg',
         contentType: 'image/jpeg',
       });
 
@@ -153,9 +169,12 @@ describe('StorageSDK', () => {
 
     it('should handle upload failure', async () => {
       const mockUploadUrl: StorageUploadUrl = {
+        file_id: 'file-123',
         upload_url: 'https://minio.example.com/upload?token=abc123',
-        object_key: 'uploads/file-123/photo.jpg',
-        expires_at: '2024-01-01T01:00:00Z',
+        method: 'PUT',
+        expires_in: 3600,
+        path: 'uploads/photo.jpg',
+        bucket: 'test-project-bucket',
       };
 
       // First call: getUploadUrl
@@ -180,7 +199,7 @@ describe('StorageSDK', () => {
 
       try {
         await storage.upload(fileBlob, {
-          filename: 'photo.jpg',
+          path: 'uploads/photo.jpg',
           contentType: 'image/jpeg',
         });
         fail('Should have thrown error');

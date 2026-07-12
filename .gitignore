@@ -81,3 +81,8 @@ coverage/
 # Swift SDK
 .build/
 .swiftpm/
+
+# Dart SDK
+.dart_tool/
+.packages
+pubspec.lock

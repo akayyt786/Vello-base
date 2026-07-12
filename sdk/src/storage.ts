@@ -6,23 +6,25 @@ export class StorageSDK extends OwnFirebaseClient {
    * Request a presigned upload URL from MinIO/S3 for direct browser upload.
    */
   async getUploadUrl(options: {
-    filename: string;
-    contentType: string;
-    path?: string;
+    path: string;
+    contentType?: string;
+    size?: number;
+    metadata?: Record<string, unknown>;
   }): Promise<StorageUploadUrl> {
     return this.request('POST', this.projectUrl('storage/upload-url/'), {
-      filename: options.filename,
-      content_type: options.contentType,
       path: options.path,
+      content_type: options.contentType,
+      size: options.size,
+      metadata: options.metadata,
     });
   }
 
   /**
    * Confirm a direct upload after the client has PUT to the presigned URL.
    */
-  async confirmUpload(objectKey: string): Promise<StorageObject> {
+  async confirmUpload(fileId: string): Promise<StorageObject> {
     return this.request('POST', this.projectUrl('storage/confirm/'), {
-      object_key: objectKey,
+      file_id: fileId,
     });
   }
 
@@ -51,13 +53,18 @@ export class StorageSDK extends OwnFirebaseClient {
    */
   async upload(
     file: Blob | Buffer | ArrayBuffer,
-    options: { filename: string; contentType: string; path?: string }
+    options: {
+      path: string;
+      contentType?: string;
+      size?: number;
+      metadata?: Record<string, unknown>;
+    }
   ): Promise<StorageObject> {
-    const { upload_url, object_key } = await this.getUploadUrl(options);
+    const { upload_url, file_id } = await this.getUploadUrl(options);
 
     const putResponse = await fetch(upload_url, {
       method: 'PUT',
-      headers: { 'Content-Type': options.contentType },
+      headers: options.contentType ? { 'Content-Type': options.contentType } : undefined,
       body: file as any,
     });
 
@@ -67,6 +74,6 @@ export class StorageSDK extends OwnFirebaseClient {
       );
     }
 
-    return this.confirmUpload(object_key);
+    return this.confirmUpload(file_id);
   }
 }

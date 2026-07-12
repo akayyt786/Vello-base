@@ -8,7 +8,11 @@ class ProjectSubscriptionSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProjectSubscription
         fields = ['id', 'tier', 'limits', 'billing_email', 'trial_ends_at', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'limits', 'created_at', 'updated_at']
+        # tier is deliberately read-only here: it must only change via a
+        # verified Stripe checkout/webhook flow (billing/stripe_service.py),
+        # never directly through this API — otherwise any project editor
+        # could PATCH themselves straight to 'enterprise' for free.
+        read_only_fields = ['id', 'tier', 'limits', 'created_at', 'updated_at']
 
     def get_limits(self, obj):
         return obj.get_limits()

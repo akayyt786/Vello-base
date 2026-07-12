@@ -104,31 +104,33 @@ export class AuthSDK extends OwnFirebaseClient {
 
   async verifyPhoneOTP(
     phoneNumber: string,
-    code: string
+    otpCode: string
   ): Promise<AuthTokens> {
     return this.request(
       'POST',
       `${this.baseUrl}/api/v1/auth/phone/verify-otp/`,
-      { phone_number: phoneNumber, code },
+      { phone_number: phoneNumber, otp_code: otpCode },
       { noAuth: true }
     );
   }
 
   // ─── MFA ─────────────────────────────────────────────────────────────────────
 
-  async enrollTOTP(): Promise<{ totp_uri: string; secret: string }> {
+  async enrollTOTP(): Promise<{ device_id: string; secret: string; provisioning_uri: string }> {
     return this.request('POST', `${this.baseUrl}/api/v1/auth/mfa/enroll/totp/`, {});
   }
 
-  async confirmTOTP(code: string): Promise<{ detail: string }> {
+  async confirmTOTP(deviceId: string, totpCode: string): Promise<{ detail: string }> {
     return this.request('POST', `${this.baseUrl}/api/v1/auth/mfa/confirm/totp/`, {
-      code,
+      device_id: deviceId,
+      totp_code: totpCode,
     });
   }
 
-  async verifyTOTP(code: string): Promise<AuthTokens> {
+  async verifyTOTP(deviceId: string, totpCode: string): Promise<AuthTokens> {
     return this.request('POST', `${this.baseUrl}/api/v1/auth/mfa/verify/totp/`, {
-      code,
+      device_id: deviceId,
+      totp_code: totpCode,
     });
   }
 

@@ -1,0 +1,17 @@
+{{- if .Values.redis.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ownfirebase.fullname" . }}-redis
+  labels:
+    {{- include "ownfirebase.componentLabels" (dict "context" . "component" "redis") | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: redis
+      port: {{ .Values.redis.service.port }}
+      targetPort: redis
+      protocol: TCP
+  selector:
+    {{- include "ownfirebase.componentSelectorLabels" (dict "context" . "component" "redis") | nindent 4 }}
+{{- end }}

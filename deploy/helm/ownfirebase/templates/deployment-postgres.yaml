@@ -1,0 +1,101 @@
+{{/*
+Bundled single-replica Postgres, no external chart dependency (per task
+requirements — no Bitnami subchart). Uses pgvector/pgvector:pg16 rather
+than plain postgres:16-alpine because postgres-init.sql runs
+`CREATE EXTENSION IF NOT EXISTS "pgvector"` and rag/models.py + services.py
+document an intended pgvector-backed embedding column — plain postgres
+images don't ship that extension.
+
+strategy: Recreate is required (not just nice-to-have): the PVC below is
+ReadWriteOnce, so a RollingUpdate would try to schedule the new pod while
+the old one still holds the volume and get stuck.
+*/}}
+{{- if .Values.postgresql.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ownfirebase.fullname" . }}-postgres
+  labels:
+    {{- include "ownfirebase.componentLabels" (dict "context" . "component" "postgres") | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "ownfirebase.componentSelectorLabels" (dict "context" . "component" "postgres") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ownfirebase.componentSelectorLabels" (dict "context" . "component" "postgres") | nindent 8 }}
+    spec:
+      containers:
+        - name: postgres
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ownfirebase.fullname" . }}-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ownfirebase.fullname" . }}-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ownfirebase.fullname" . }}-secrets
+                  key: POSTGRES_PASSWORD
+            # No POSTGRES_INITDB_ARGS here on purpose: docker-compose.yml's
+            # postgres service used to set "-c rls=on", but `rls` is not a
+            # real Postgres GUC (row-level security is per-table, enabled by
+            # postgres-init.sql's ALTER TABLE ... ENABLE ROW LEVEL SECURITY
+            # statements, not a global config flag). That value gets written
+            # into postgresql.conf verbatim by initdb and Postgres refuses to
+            # start on every subsequent boot ("unrecognized configuration
+            # parameter \"rls\"") — confirmed by a live kind deploy during
+            # this chart's verification, and fixed upstream in
+            # docker-compose.yml too.
+            # Avoid initdb "directory not empty" failures some CSI drivers
+            # trigger by pre-seeding a lost+found dir at the PVC mount root.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgres
+              containerPort: 5432
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init-script
+              mountPath: /docker-entrypoint-initdb.d
+          livenessProbe:
+            exec:
+              command:
+                - bash
+                - -c
+                - pg_isready -U "$POSTGRES_USER"
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            exec:
+              command:
+                - bash
+                - -c
+                - pg_isready -U "$POSTGRES_USER"
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.postgresql.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "ownfirebase.fullname" . }}-postgres
+        - name: init-script
+          configMap:
+            name: {{ include "ownfirebase.fullname" . }}-postgres-init
+{{- end }}

@@ -84,15 +84,18 @@ export interface StorageObject {
 }
 
 export interface StorageUploadUrl {
+  file_id: string;
   upload_url: string;
-  object_key: string;
-  expires_at: string;
+  method: string;
+  expires_in: number;
+  path: string;
+  bucket: string;
 }
 
 export interface PushDeviceToken {
   id: string;
   token: string;
-  platform: 'ios' | 'android' | 'web';
+  platform: 'fcm' | 'apns' | 'web';
   is_active: boolean;
 }
 

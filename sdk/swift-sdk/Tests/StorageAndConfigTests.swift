@@ -26,15 +26,19 @@ final class StorageServiceTests: XCTestCase {
     StorageMockURLProtocol.mockData = nil
     StorageMockURLProtocol.mockResponse = nil
     StorageMockURLProtocol.mockError = nil
+    StorageMockURLProtocol.responseQueue = []
   }
 
   // MARK: - Upload URL Tests
 
   func testGetUploadUrlSuccess() async throws {
     let expectedUrl = StorageUploadUrl(
+      file_id: "file-1",
       upload_url: "https://s3.example.com/presigned-url",
-      object_key: "uploads/file.txt",
-      expires_at: "2024-01-01T01:00:00Z"
+      method: "PUT",
+      expires_in: 3600,
+      path: "uploads/file.txt",
+      bucket: "test-bucket"
     )
 
     let jsonData = try JSONEncoder().encode(expectedUrl)
@@ -47,22 +51,27 @@ final class StorageServiceTests: XCTestCase {
     )
 
     let result = try await firebase.storage.getUploadUrl(
-      filename: "file.txt",
+      path: "uploads/file.txt",
       contentType: "text/plain"
     )
 
-    XCTAssertEqual(result.object_key, "uploads/file.txt")
+    XCTAssertEqual(result.file_id, "file-1")
     XCTAssertTrue(result.upload_url.contains("s3.example.com"))
   }
 
   func testConfirmUploadSuccess() async throws {
     let expectedObject = StorageObject(
       id: "obj-1",
-      name: "file.txt",
-      size: 1024,
+      path: "uploads/file.txt",
+      original_name: "file.txt",
       content_type: "text/plain",
-      url: "https://storage.example.com/file.txt",
-      created_at: "2024-01-01T00:00:00Z"
+      size: 1024,
+      status: "confirmed",
+      metadata: [:],
+      thumbnails: [:],
+      download_url: "https://storage.example.com/file.txt",
+      created_at: "2024-01-01T00:00:00Z",
+      updated_at: "2024-01-01T00:00:00Z"
     )
 
     let jsonData = try JSONEncoder().encode(expectedObject)
@@ -74,9 +83,9 @@ final class StorageServiceTests: XCTestCase {
       headerFields: nil
     )
 
-    let result = try await firebase.storage.confirmUpload(objectKey: "uploads/file.txt")
+    let result = try await firebase.storage.confirmUpload(fileId: "obj-1")
 
-    XCTAssertEqual(result.name, "file.txt")
+    XCTAssertEqual(result.original_name, "file.txt")
     XCTAssertEqual(result.size, 1024)
   }
 
@@ -86,19 +95,29 @@ final class StorageServiceTests: XCTestCase {
     let files = [
       StorageObject(
         id: "obj-1",
-        name: "file1.txt",
-        size: 1024,
+        path: "uploads/file1.txt",
+        original_name: "file1.txt",
         content_type: "text/plain",
-        url: "https://storage.example.com/file1.txt",
-        created_at: "2024-01-01T00:00:00Z"
+        size: 1024,
+        status: "confirmed",
+        metadata: [:],
+        thumbnails: [:],
+        download_url: "https://storage.example.com/file1.txt",
+        created_at: "2024-01-01T00:00:00Z",
+        updated_at: "2024-01-01T00:00:00Z"
       ),
       StorageObject(
         id: "obj-2",
-        name: "file2.txt",
-        size: 2048,
+        path: "uploads/file2.txt",
+        original_name: "file2.txt",
         content_type: "text/plain",
-        url: "https://storage.example.com/file2.txt",
-        created_at: "2024-01-01T00:00:00Z"
+        size: 2048,
+        status: "confirmed",
+        metadata: [:],
+        thumbnails: [:],
+        download_url: "https://storage.example.com/file2.txt",
+        created_at: "2024-01-01T00:00:00Z",
+        updated_at: "2024-01-01T00:00:00Z"
       )
     ]
 
@@ -127,11 +146,16 @@ final class StorageServiceTests: XCTestCase {
   func testGetFileSuccess() async throws {
     let expectedFile = StorageObject(
       id: "obj-1",
-      name: "file.txt",
-      size: 1024,
+      path: "uploads/file.txt",
+      original_name: "file.txt",
       content_type: "text/plain",
-      url: "https://storage.example.com/file.txt",
-      created_at: "2024-01-01T00:00:00Z"
+      size: 1024,
+      status: "confirmed",
+      metadata: [:],
+      thumbnails: [:],
+      download_url: "https://storage.example.com/file.txt",
+      created_at: "2024-01-01T00:00:00Z",
+      updated_at: "2024-01-01T00:00:00Z"
     )
 
     let jsonData = try JSONEncoder().encode(expectedFile)
@@ -145,7 +169,7 @@ final class StorageServiceTests: XCTestCase {
 
     let result = try await firebase.storage.getFile(path: "file.txt")
 
-    XCTAssertEqual(result.name, "file.txt")
+    XCTAssertEqual(result.original_name, "file.txt")
   }
 
   func testDeleteFileSuccess() async throws {
@@ -164,38 +188,52 @@ final class StorageServiceTests: XCTestCase {
 
   func testUploadSuccess() async throws {
     let uploadUrl = StorageUploadUrl(
+      file_id: "obj-1",
       upload_url: "https://s3.example.com/presigned-url",
-      object_key: "uploads/file.txt",
-      expires_at: "2024-01-01T01:00:00Z"
+      method: "PUT",
+      expires_in: 3600,
+      path: "uploads/file.txt",
+      bucket: "test-bucket"
     )
 
     let confirmObject = StorageObject(
       id: "obj-1",
-      name: "file.txt",
-      size: 1024,
+      path: "uploads/file.txt",
+      original_name: "file.txt",
       content_type: "text/plain",
-      url: "https://storage.example.com/file.txt",
-      created_at: "2024-01-01T00:00:00Z"
+      size: 1024,
+      status: "confirmed",
+      metadata: [:],
+      thumbnails: [:],
+      download_url: "https://storage.example.com/file.txt",
+      created_at: "2024-01-01T00:00:00Z",
+      updated_at: "2024-01-01T00:00:00Z"
     )
 
-    // Mock sequential responses for get upload URL and confirm upload
-    StorageMockURLProtocol.mockData = try JSONEncoder().encode(uploadUrl)
-    StorageMockURLProtocol.mockResponse = HTTPURLResponse(
-      url: URL(string: "http://localhost:8000/api/projects/test-project/storage/upload-url/")!,
+    // Queue sequential responses for the three legs of upload():
+    // 1) POST storage/upload-url/  2) PUT to the presigned URL  3) POST storage/confirm/
+    let okResponse = HTTPURLResponse(
+      url: URL(string: "http://localhost:8000/")!,
       statusCode: 200,
       httpVersion: nil,
       headerFields: nil
-    )
+    )!
+    StorageMockURLProtocol.responseQueue = [
+      (try JSONEncoder().encode(uploadUrl), okResponse),
+      (Data(), okResponse),
+      (try JSONEncoder().encode(confirmObject), okResponse),
+    ]
 
     let fileData = "test file content".data(using: .utf8)!
 
     let result = try await firebase.storage.upload(
       data: fileData,
-      filename: "file.txt",
+      path: "uploads/file.txt",
       contentType: "text/plain"
     )
 
-    XCTAssertEqual(result.name, "file.txt")
+    XCTAssertEqual(result.original_name, "file.txt")
+    XCTAssertEqual(result.id, "obj-1")
   }
 }
 
@@ -701,6 +739,9 @@ class StorageMockURLProtocol: URLProtocol {
   static var mockData: Data?
   static var mockResponse: HTTPURLResponse?
   static var mockError: Error?
+  // Optional FIFO queue for tests that exercise multiple sequential requests
+  // (e.g. upload-url -> presigned PUT -> confirm) where each leg needs its own response.
+  static var responseQueue: [(Data, HTTPURLResponse)] = []
 
   override class func canInit(with request: URLRequest) -> Bool {
     return true
@@ -713,6 +754,11 @@ class StorageMockURLProtocol: URLProtocol {
   override func startLoading() {
     if let error = StorageMockURLProtocol.mockError {
       client?.urlProtocol(self, didFailWithError: error)
+    } else if !StorageMockURLProtocol.responseQueue.isEmpty {
+      let (data, response) = StorageMockURLProtocol.responseQueue.removeFirst()
+      client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+      client?.urlProtocol(self, didLoad: data)
+      client?.urlProtocolDidFinishLoading(self)
     } else if let response = StorageMockURLProtocol.mockResponse {
       client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
       client?.urlProtocol(self, didLoad: StorageMockURLProtocol.mockData ?? Data())

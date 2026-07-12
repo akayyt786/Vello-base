@@ -99,7 +99,7 @@ class DataDocument {
     return DataDocument(
       id: json['id'] as String,
       collection: json['collection'] as String,
-      data: (json['data'] ?? {}) as Map<String, dynamic>,
+      data: Map<String, dynamic>.from(json['data'] as Map? ?? {}),
       createdAt: json['created_at'] as String,
       updatedAt: json['updated_at'] as String,
     );
@@ -155,7 +155,7 @@ class AnalyticsEvent {
     return AnalyticsEvent(
       id: json['id'] as String,
       name: json['name'] as String,
-      params: (json['params'] ?? {}) as Map<String, dynamic>,
+      params: Map<String, dynamic>.from(json['params'] as Map? ?? {}),
       timestamp: json['timestamp'] as String,
       userId: json['user_id'] as String?,
       sessionId: json['session_id'] as String?,
@@ -249,7 +249,7 @@ class ExperimentAssignment {
   factory ExperimentAssignment.fromJson(Map<String, dynamic> json) {
     return ExperimentAssignment(
       variantName: json['variant_name'] as String,
-      config: (json['config'] ?? {}) as Map<String, dynamic>,
+      config: Map<String, dynamic>.from(json['config'] as Map? ?? {}),
       experimentName: json['experiment_name'] as String,
     );
   }

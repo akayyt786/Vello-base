@@ -170,12 +170,12 @@ class StorageServiceTest {
 
         try {
             val uploadUrl = sdk.storage().getUploadUrl(
-                filename = "test.txt",
+                path = "test.txt",
                 contentType = "text/plain"
             )
 
             assertNotNull(uploadUrl.upload_url)
-            assertNotNull(uploadUrl.object_key)
+            assertNotNull(uploadUrl.file_id)
         } catch (e: APIError) {
             if (e.status == 401) {
                 // Expected - no auth token

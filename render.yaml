@@ -1,0 +1,148 @@
+# render.yaml — Render Blueprint for OwnFirebase.
+#
+# Declares the full stack as separate Render services (Render does not support deploying a
+# docker-compose.yml directly — see docs/DEPLOYMENT_ONE_CLICK.md for why this file exists as a
+# set of individual service blocks instead of a Compose import). Every service builds from the
+# same repo-root Dockerfile; the Dockerfile itself has no CMD, so `dockerCommand` below is not
+# optional cosmetic override — it is the only thing that makes each service run its intended
+# process (matches the commands docker-compose.yml already uses).
+#
+# Cost note: the web service can run on Render's free plan (with cold starts after 15 minutes of
+# inactivity), but the Celery worker, Celery Beat, and Postgres realistically need at least
+# Render's paid "starter" tier — Render does not offer free background workers, and free Postgres
+# instances are time-limited. See docs/DEPLOYMENT_ONE_CLICK.md for the honest cost breakdown.
+#
+# Validate this file against your Render account before relying on it — Render's exact plan
+# names, `fromDatabase`/`fromService` property names, and free-tier availability can change; run
+# `render blueprint sync --dry-run` (or use the dashboard's "New > Blueprint" preview) first.
+
+databases:
+  - name: ownfirebase-db
+    plan: starter
+    postgresMajorVersion: "16"
+    databaseName: ownfirebase
+    user: ownfirebase
+    # postgres-init.sql (repo root) enables pgvector/pg_trgm/uuid-ossp and sets RLS session
+    # variables — Render's managed Postgres does NOT run docker-entrypoint-initdb.d scripts, so
+    # this file will NOT run automatically here. After the database is provisioned, connect with
+    # `psql` (Render gives you a connection string in the dashboard) and run the CREATE EXTENSION
+    # / CREATE SCHEMA / ALTER DATABASE statements from postgres-init.sql by hand once, substituting
+    # the real (Render-generated) database name for the hardcoded "ownfirebase" in that file.
+
+services:
+  # Redis — Celery broker/result backend, Channels layer, cache, presence.
+  - name: ownfirebase-redis
+    type: keyvalue
+    plan: starter
+    ipAllowList: []   # no direct external access; other services below reach it via fromService
+    maxmemoryPolicy: noeviction   # avoid silently dropping queued Celery tasks under memory pressure
+
+  # Django app server — Daphne (ASGI), so both HTTP and the realtime WebSocket route
+  # (/ws/v1/projects/{id}/listen/) are served from the same process/port. This mirrors
+  # docker-compose.yml's dev command, not docker-compose.prod.yml's gunicorn/WSGI-only command —
+  # gunicorn alone would not serve the WebSocket route. Split HTTP/WS onto separate processes
+  # yourself later if you outgrow a single Daphne instance.
+  - name: ownfirebase-web
+    type: web
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: >
+      bash -c "python manage.py migrate --noinput && python manage.py createcachetable && daphne -b 0.0.0.0 -p 8000 ownfirebase.asgi:application"
+    plan: free
+    healthCheckPath: /health/
+    envVars:
+      - key: PORT
+        value: "8000"
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: JWT_SIGNING_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "false"
+      - key: USE_POSTGRES
+        value: "True"
+      # Render assigns a *.onrender.com subdomain; replace with your real domain once you have one.
+      - key: ALLOWED_HOSTS
+        value: ".onrender.com"
+      # Must be updated to your actual frontend origin(s) — see ownfirebase/settings.py CORS block.
+      - key: CORS_ALLOWED_ORIGINS
+        value: "https://your-frontend.example.com"
+      - key: DATABASE_NAME
+        fromDatabase: { name: ownfirebase-db, property: database }
+      - key: DATABASE_USER
+        fromDatabase: { name: ownfirebase-db, property: user }
+      - key: DATABASE_PASSWORD
+        fromDatabase: { name: ownfirebase-db, property: password }
+      - key: DATABASE_HOST
+        fromDatabase: { name: ownfirebase-db, property: host }
+      - key: DATABASE_PORT
+        fromDatabase: { name: ownfirebase-db, property: port }
+      - key: REDIS_URL
+        fromService: { name: ownfirebase-redis, type: keyvalue, property: connectionString }
+
+  # Celery worker — executes functions/tasks.py (Cloud Functions webhook dispatch),
+  # push/tasks.py (notification delivery trigger), storage/tasks.py, etc.
+  - name: ownfirebase-worker
+    type: worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: celery -A ownfirebase worker -l info
+    plan: starter
+    envVars:
+      # Shares the exact same secret the web service generated — required, since JWTs issued by
+      # the web process must decode identically here (custom-token / password-reset flows touch
+      # both). Do NOT set `generateValue: true` again here — that would mint a different secret.
+      - key: DJANGO_SECRET_KEY
+        fromService: { name: ownfirebase-web, type: web, envVarKey: DJANGO_SECRET_KEY }
+      - key: JWT_SIGNING_KEY
+        fromService: { name: ownfirebase-web, type: web, envVarKey: JWT_SIGNING_KEY }
+      - key: DEBUG
+        value: "false"
+      - key: USE_POSTGRES
+        value: "True"
+      - key: DATABASE_NAME
+        fromDatabase: { name: ownfirebase-db, property: database }
+      - key: DATABASE_USER
+        fromDatabase: { name: ownfirebase-db, property: user }
+      - key: DATABASE_PASSWORD
+        fromDatabase: { name: ownfirebase-db, property: password }
+      - key: DATABASE_HOST
+        fromDatabase: { name: ownfirebase-db, property: host }
+      - key: DATABASE_PORT
+        fromDatabase: { name: ownfirebase-db, property: port }
+      - key: REDIS_URL
+        fromService: { name: ownfirebase-redis, type: keyvalue, property: connectionString }
+
+  # Celery Beat — scheduled triggers (functions/models.py TRIGGER_SCHEDULED cron functions,
+  # scheduled push campaigns). Uses the django-celery-beat DB-backed scheduler, same as
+  # docker-compose.yml's celery_beat service.
+  - name: ownfirebase-beat
+    type: worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: celery -A ownfirebase beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    plan: starter
+    envVars:
+      - key: DJANGO_SECRET_KEY
+        fromService: { name: ownfirebase-web, type: web, envVarKey: DJANGO_SECRET_KEY }
+      - key: JWT_SIGNING_KEY
+        fromService: { name: ownfirebase-web, type: web, envVarKey: JWT_SIGNING_KEY }
+      - key: DEBUG
+        value: "false"
+      - key: USE_POSTGRES
+        value: "True"
+      - key: DATABASE_NAME
+        fromDatabase: { name: ownfirebase-db, property: database }
+      - key: DATABASE_USER
+        fromDatabase: { name: ownfirebase-db, property: user }
+      - key: DATABASE_PASSWORD
+        fromDatabase: { name: ownfirebase-db, property: password }
+      - key: DATABASE_HOST
+        fromDatabase: { name: ownfirebase-db, property: host }
+      - key: DATABASE_PORT
+        fromDatabase: { name: ownfirebase-db, property: port }
+      - key: REDIS_URL
+        fromService: { name: ownfirebase-redis, type: keyvalue, property: connectionString }

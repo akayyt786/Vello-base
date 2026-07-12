@@ -1,0 +1,52 @@
+{{/*
+Runs `manage.py migrate` (+ createcachetable, + collectstatic for
+WhiteNoise's CompressedManifestStaticFilesStorage) exactly once per
+install/upgrade, before real traffic is expected to hit web/websocket pods.
+
+See values.yaml `migrationJob` comment block for why this uses
+`post-install,pre-upgrade` instead of the literally-requested
+`pre-install,pre-upgrade` — pre-install hooks run before this chart's own
+bundled postgres/redis Deployments exist, so they'd always fail on a first
+install.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "ownfirebase.fullname" . }}-migrate
+  labels:
+    {{- include "ownfirebase.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,pre-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrationJob.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migrationJob.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "ownfirebase.componentSelectorLabels" (dict "context" . "component" "migrate") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "ownfirebase.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        {{- include "ownfirebase.waitForDeps" . | nindent 8 }}
+      containers:
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - bash
+            - -c
+            - |
+              set -e
+              python manage.py migrate --noinput
+              python manage.py createcachetable
+              python manage.py collectstatic --noinput
+          {{- include "ownfirebase.envFrom" . | nindent 10 }}
+          resources:
+            {{- toYaml .Values.migrationJob.resources | nindent 12 }}

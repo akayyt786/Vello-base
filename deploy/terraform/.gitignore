@@ -1,0 +1,21 @@
+# Local Terraform state/cache and anything that could carry real secrets.
+# Scoped to deploy/terraform/ only — this repo's root .gitignore has no
+# Terraform patterns yet, and this module shouldn't require editing files
+# outside its own directory to be safe to run.
+
+.terraform/
+.terraform.lock.hcl.tmp
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Real variable files — only terraform.tfvars.example (placeholders only)
+# should ever be committed.
+terraform.tfvars
+*.auto.tfvars
+*.auto.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json

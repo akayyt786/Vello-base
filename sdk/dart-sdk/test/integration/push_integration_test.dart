@@ -78,7 +78,7 @@ void main() {
     });
 
     test('Rich notification with data', () {
-      final richNotification = {
+      final richNotification = <String, dynamic>{
         'title': 'New Message',
         'body': 'Alice sent you a message',
         'data': {
@@ -125,7 +125,7 @@ void main() {
     });
 
     test('Notification with deep links', () {
-      final notification = {
+      final notification = <String, dynamic>{
         'title': 'Special Offer',
         'body': '50% off this weekend',
         'data': {

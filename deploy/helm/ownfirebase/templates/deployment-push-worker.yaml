@@ -1,0 +1,68 @@
+{{/*
+push-worker: optional Rust binary for FCM/APNs/WebPush delivery
+(rust/push-worker). Disabled by default (pushWorker.enabled=false) since it
+needs real FCM/APNs/VAPID credentials most users won't have. Its Dockerfile
+ENTRYPOINT already invokes the compiled binary directly (no manage.py-style
+CLI), and unlike Django it reads a single DATABASE_URL connection string
+rather than split DATABASE_HOST/USER/etc — assembled here from the same
+config/secret values via shell env-var expansion at container start.
+*/}}
+{{- if .Values.pushWorker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ownfirebase.fullname" . }}-push-worker
+  labels:
+    {{- include "ownfirebase.componentLabels" (dict "context" . "component" "push-worker") | nindent 4 }}
+spec:
+  replicas: {{ .Values.pushWorker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "ownfirebase.componentSelectorLabels" (dict "context" . "component" "push-worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ownfirebase.componentSelectorLabels" (dict "context" . "component" "push-worker") | nindent 8 }}
+      {{- with .Values.pushWorker.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "ownfirebase.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        {{- include "ownfirebase.waitForDeps" . | nindent 8 }}
+      containers:
+        - name: push-worker
+          image: "{{ .Values.pushWorker.image.repository }}:{{ .Values.pushWorker.image.tag }}"
+          imagePullPolicy: {{ .Values.pushWorker.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              export DATABASE_URL="postgresql://${DATABASE_USER}:${DATABASE_PASSWORD}@${DATABASE_HOST}:${DATABASE_PORT}/${DATABASE_NAME}"
+              exec /usr/local/bin/push-worker
+          env:
+            - name: RUST_LOG
+              value: "info"
+            - name: PUSH_WORKER_CONCURRENCY
+              value: {{ .Values.pushWorker.concurrency | quote }}
+          {{- include "ownfirebase.envFrom" . | nindent 10 }}
+          resources:
+            {{- toYaml .Values.pushWorker.resources | nindent 12 }}
+      {{- with .Values.pushWorker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.pushWorker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.pushWorker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

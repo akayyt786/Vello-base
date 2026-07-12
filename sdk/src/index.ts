@@ -39,7 +39,7 @@ export {
 };
 
 // Re-export supplemental types from sub-modules
-export type { PushNotificationPayload, PushNotificationRecord } from './push';
+export type { PushNotificationPayload, PushNotificationRecord, PushTopicSubscription } from './push';
 export type { AnalyticsQueryParams, AnalyticsQueryResult, BatchEventParams } from './analytics';
 export type { CrashGroup, NetworkRequestRecord } from './crashlytics';
 export type { ConfigCondition } from './remoteconfig';

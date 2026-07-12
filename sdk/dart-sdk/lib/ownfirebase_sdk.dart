@@ -11,6 +11,9 @@ export 'analytics.dart';
 export 'push.dart';
 export 'remoteconfig.dart';
 export 'abtesting.dart';
+export 'storage.dart';
+export 'crashlytics.dart';
+export 'realtime.dart';
 
 import 'types.dart';
 import 'auth.dart';
@@ -19,6 +22,9 @@ import 'analytics.dart';
 import 'push.dart';
 import 'remoteconfig.dart';
 import 'abtesting.dart';
+import 'storage.dart';
+import 'crashlytics.dart';
+import 'realtime.dart';
 
 /// Main OwnFirebase SDK bundle
 class OwnFirebase {
@@ -28,6 +34,9 @@ class OwnFirebase {
   final PushSDK push;
   final RemoteConfigSDK remoteConfig;
   final ABTestingSDK ab;
+  final StorageSDK storage;
+  final CrashlyticsSDK crashlytics;
+  final RealtimeSDK realtime;
 
   OwnFirebase({required OwnFirebaseConfig config})
       : auth = AuthSDK(config: config),
@@ -35,7 +44,10 @@ class OwnFirebase {
         analytics = AnalyticsSDK(config: config),
         push = PushSDK(config: config),
         remoteConfig = RemoteConfigSDK(config: config),
-        ab = ABTestingSDK(config: config);
+        ab = ABTestingSDK(config: config),
+        storage = StorageSDK(config: config),
+        crashlytics = CrashlyticsSDK(config: config),
+        realtime = RealtimeSDK(config: config);
 
   /// Set the access token for all services
   void setAccessToken(String token) {
@@ -45,6 +57,9 @@ class OwnFirebase {
     push.setAccessToken(token);
     remoteConfig.setAccessToken(token);
     ab.setAccessToken(token);
+    storage.setAccessToken(token);
+    crashlytics.setAccessToken(token);
+    realtime.setAccessToken(token);
   }
 
   /// Set the project ID for all services
@@ -55,6 +70,9 @@ class OwnFirebase {
     push.setProjectId(id);
     remoteConfig.setProjectId(id);
     ab.setProjectId(id);
+    storage.setProjectId(id);
+    crashlytics.setProjectId(id);
+    realtime.setProjectId(id);
   }
 }
 
