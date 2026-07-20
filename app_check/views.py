@@ -18,20 +18,44 @@ import logging
 
 from django.db import IntegrityError
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.models import Project, ProjectMembership
+from .encryption import encrypt_secret
 from .models import AppCheckConfig, AppCheckToken, DebugToken
 from .serializers import (
     AppCheckConfigSerializer, AppCheckTokenSerializer,
     DebugTokenSerializer, ExchangeTokenSerializer,
 )
-from .services import exchange_debug_token, validate_app_check_token, hash_token
+from . import services
+from .services import exchange_debug_token, validate_app_check_token, hash_token, get_token_expiry
 
 logger = logging.getLogger(__name__)
+
+# Providers with a real verification function wired below. Looked up by
+# name (not bound directly) so `services.verify_play_integrity_token` stays
+# patchable at test time -- binding the function objects into this dict at
+# import time would freeze in the pre-patch reference.
+PRODUCTION_VERIFIER_NAMES = {
+    'play_integrity': 'verify_play_integrity_token',
+    'device_check': 'verify_device_check_token',
+    'recaptcha_v3': 'verify_recaptcha_v3_token',
+    'recaptcha_enterprise': 'verify_recaptcha_enterprise_token',
+}
+
+# Config keys that hold plaintext secrets on the way in -- encrypted before
+# storage and never round-tripped back out in plaintext (see
+# AppCheckConfigSerializer.to_representation).
+CONFIG_SECRET_FIELDS = {
+    'service_account_key': 'service_account_key_encrypted',
+    'private_key': 'private_key_encrypted',
+    'secret_key': 'secret_key_encrypted',
+    'api_key': 'api_key_encrypted',
+}
 
 
 def _get_project(request, project_id, require_editor=False):
@@ -41,6 +65,15 @@ def _get_project(request, project_id, require_editor=False):
         from rest_framework.exceptions import PermissionDenied
         raise PermissionDenied('Editor role required.')
     return project
+
+
+def _encrypt_config_secrets(config_data):
+    """Encrypt any plaintext provider secrets in a config payload before it's persisted."""
+    config_data = dict(config_data or {})
+    for plain_key, encrypted_key in CONFIG_SECRET_FIELDS.items():
+        if plain_key in config_data:
+            config_data[encrypted_key] = encrypt_secret(config_data.pop(plain_key))
+    return config_data
 
 
 class AppCheckConfigListView(APIView):
@@ -53,7 +86,10 @@ class AppCheckConfigListView(APIView):
 
     def post(self, request, project_id):
         project = _get_project(request, project_id, require_editor=True)
-        ser = AppCheckConfigSerializer(data=request.data)
+        data = dict(request.data)
+        if 'config' in data:
+            data['config'] = _encrypt_config_secrets(data['config'])
+        ser = AppCheckConfigSerializer(data=data)
         ser.is_valid(raise_exception=True)
         try:
             ser.save(project=project)
@@ -71,7 +107,10 @@ class AppCheckConfigDetailView(APIView):
     def patch(self, request, project_id, pk):
         project = _get_project(request, project_id, require_editor=True)
         config = get_object_or_404(AppCheckConfig, pk=pk, project=project)
-        ser = AppCheckConfigSerializer(config, data=request.data, partial=True)
+        data = dict(request.data)
+        if 'config' in data:
+            data['config'] = _encrypt_config_secrets(data['config'])
+        ser = AppCheckConfigSerializer(config, data=data, partial=True)
         ser.is_valid(raise_exception=True)
         ser.save()
         return Response(ser.data)
@@ -115,12 +154,30 @@ class ExchangeTokenView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Placeholder: production validation would call provider API here
-        # For now return error indicating provider integration needed
-        return Response(
-            {'error': f'Production provider "{provider}" requires server-side integration. Use debug provider for testing.'},
-            status=status.HTTP_501_NOT_IMPLEMENTED,
+        verify_fn_name = PRODUCTION_VERIFIER_NAMES.get(provider)
+        if not verify_fn_name:
+            # No verify_* implementation for this provider yet.
+            return Response(
+                {'error': f'Production provider "{provider}" requires server-side integration. Use debug provider for testing.'},
+                status=status.HTTP_501_NOT_IMPLEMENTED,
+            )
+
+        app_id, error = getattr(services, verify_fn_name)(config, raw_token)
+        if error:
+            return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
+
+        token_hash = hash_token(f'{provider}:{raw_token}:{timezone.now().isoformat()}')
+        app_check_token = AppCheckToken.objects.create(
+            project=project,
+            token_hash=token_hash,
+            platform=platform,
+            app_id=app_id,
+            expires_at=get_token_expiry(),
         )
+        return Response({
+            'token': app_check_token.token_hash,
+            'expires_at': app_check_token.expires_at.isoformat(),
+        })
 
 
 class VerifyTokenView(APIView):

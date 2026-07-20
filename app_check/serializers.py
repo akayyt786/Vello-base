@@ -10,6 +10,16 @@ class AppCheckConfigSerializer(serializers.ModelSerializer):
         fields = ['id', 'platform', 'provider', 'config', 'is_enabled', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
 
+    def to_representation(self, instance):
+        """Mask encrypted provider secrets -- never echo ciphertext back through the API."""
+        data = super().to_representation(instance)
+        config = data.get('config')
+        if isinstance(config, dict):
+            data['config'] = {
+                k: ('***' if k.endswith('_encrypted') else v) for k, v in config.items()
+            }
+        return data
+
 
 class AppCheckTokenSerializer(serializers.ModelSerializer):
     class Meta:

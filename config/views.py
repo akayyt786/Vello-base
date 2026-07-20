@@ -1,5 +1,5 @@
 """
-Remote Config + A/B Testing API views.
+Remote Config API views.
 
   GET    /api/projects/{id}/config/parameters/                      — list config parameters
   POST   /api/projects/{id}/config/parameters/                      — create parameter
@@ -15,21 +15,9 @@ Remote Config + A/B Testing API views.
   PUT    /api/projects/{id}/config/parameters/{config_id}/conditions/{pk}/  — update condition
   DELETE /api/projects/{id}/config/parameters/{config_id}/conditions/{pk}/  — delete condition
 
-  GET    /api/projects/{id}/config/experiments/                     — list experiments
-  POST   /api/projects/{id}/config/experiments/                     — create experiment
-  GET    /api/projects/{id}/config/experiments/{pk}/                — experiment detail
-  PUT    /api/projects/{id}/config/experiments/{pk}/                — update experiment
-  DELETE /api/projects/{id}/config/experiments/{pk}/                — delete experiment
-  POST   /api/projects/{id}/config/experiments/{pk}/assign/         — deterministically assign user to variant
-  POST   /api/projects/{id}/config/experiments/{pk}/start/          — transition to running
-  POST   /api/projects/{id}/config/experiments/{pk}/pause/          — transition to paused
-  POST   /api/projects/{id}/config/experiments/{pk}/complete/       — transition to completed
-
-  GET    /api/projects/{id}/config/experiments/{experiment_id}/variants/      — list variants
-  POST   /api/projects/{id}/config/experiments/{experiment_id}/variants/      — create variant
-  GET    /api/projects/{id}/config/experiments/{experiment_id}/variants/{pk}/ — variant detail
-  PUT    /api/projects/{id}/config/experiments/{experiment_id}/variants/{pk}/ — update variant
-  DELETE /api/projects/{id}/config/experiments/{experiment_id}/variants/{pk}/ — delete variant
+A/B experiments used to live here too (Experiment/ExperimentVariant), but
+that was a duplicate of the dedicated abtesting app (which SDKs actually use,
+and which additionally tracks assignment/conversion) -- see abtesting/views.py.
 """
 
 import hashlib
@@ -38,7 +26,6 @@ import logging
 from django.db import transaction
 from django.db.models import Max
 from django.shortcuts import get_object_or_404
-from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
@@ -46,15 +33,11 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from core.models import Project, ProjectMembership
-from .models import (
-    RemoteConfig, ConfigCondition, ConfigVersion, Experiment, ExperimentVariant,
-)
+from .models import RemoteConfig, ConfigCondition, ConfigVersion
 from .serializers import (
     RemoteConfigSerializer,
     ConfigConditionSerializer,
     ConfigVersionSerializer,
-    ExperimentSerializer,
-    ExperimentVariantSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -304,178 +287,4 @@ class ConfigConditionViewSet(_ProjectScopedMixin, viewsets.ModelViewSet):
         project = self._project(require_editor=self._write_requires_editor)
         config_id = self.kwargs['config_id']
         get_object_or_404(RemoteConfig, id=config_id, project=project)
-        instance.delete()
-
-
-# ---------------------------------------------------------------------------
-# Experiment ViewSet
-# ---------------------------------------------------------------------------
-
-class ExperimentViewSet(_ProjectScopedMixin, viewsets.ModelViewSet):
-    """
-    CRUD for A/B experiments.
-    Includes assign, start, pause, and complete actions.
-    """
-    serializer_class = ExperimentSerializer
-    _model = Experiment
-    _write_requires_editor = True
-
-    @action(detail=True, methods=['post'], url_path='assign')
-    def assign(self, request, pk=None, project_id=None):
-        """
-        Deterministically assign a user to an experiment variant.
-        Accepts: {"user_id": "<string>"}
-        Returns: {variant: {...}, config_overrides: {...}}
-
-        Assignment algorithm:
-          1. Hash (user_id + experiment_id) to get a stable bucket (0–sum_weights).
-          2. Walk variants in creation order; subtract each weight until bucket is exhausted.
-          3. Users outside traffic_fraction are not enrolled (returns {"enrolled": false}).
-        """
-        project = self._project()
-        experiment = get_object_or_404(Experiment, pk=pk, project=project)
-
-        user_id = request.data.get('user_id') or request.query_params.get('user_id', '')
-        if not user_id:
-            return Response(
-                {'error': 'user_id is required.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if experiment.status != Experiment.STATUS_RUNNING:
-            return Response(
-                {'error': f'Experiment is not running (status: {experiment.status}).'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Check if user is in the traffic fraction
-        traffic_hash = int(hashlib.md5(
-            f"traffic:{experiment.id}:{user_id}".encode()
-        ).hexdigest(), 16) % 10000
-        if traffic_hash >= int(experiment.traffic_fraction * 10000):
-            return Response({'enrolled': False}, status=status.HTTP_200_OK)
-
-        variants = list(experiment.variants.order_by('created_at'))
-        if not variants:
-            return Response(
-                {'error': 'Experiment has no variants.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        total_weight = sum(v.traffic_weight for v in variants)
-        if total_weight <= 0:
-            return Response(
-                {'error': 'Total variant weight must be > 0.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Deterministic hash-based assignment
-        assign_hash = int(hashlib.md5(
-            f"{user_id}:{experiment.id}".encode()
-        ).hexdigest(), 16)
-        bucket = (assign_hash % 10000) / 10000.0 * total_weight
-
-        assigned_variant = variants[-1]  # fallback to last if rounding error
-        cumulative = 0.0
-        for variant in variants:
-            cumulative += variant.traffic_weight
-            if bucket < cumulative:
-                assigned_variant = variant
-                break
-
-        variant_data = ExperimentVariantSerializer(assigned_variant).data
-        return Response(
-            {
-                'enrolled': True,
-                'variant': variant_data,
-                'config_overrides': assigned_variant.config_overrides,
-            },
-            status=status.HTTP_200_OK,
-        )
-
-    @action(detail=True, methods=['post'], url_path='start')
-    def start(self, request, pk=None, project_id=None):
-        """Transition experiment to running status."""
-        project = self._project(require_editor=True)
-        experiment = get_object_or_404(Experiment, pk=pk, project=project)
-
-        if experiment.status not in (Experiment.STATUS_DRAFT, Experiment.STATUS_PAUSED):
-            return Response(
-                {'error': f'Cannot start experiment with status "{experiment.status}".'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        experiment.status = Experiment.STATUS_RUNNING
-        if not experiment.start_date:
-            experiment.start_date = timezone.now()
-        experiment.save(update_fields=['status', 'start_date', 'updated_at'])
-        return Response(ExperimentSerializer(experiment).data, status=status.HTTP_200_OK)
-
-    @action(detail=True, methods=['post'], url_path='pause')
-    def pause(self, request, pk=None, project_id=None):
-        """Transition experiment to paused status."""
-        project = self._project(require_editor=True)
-        experiment = get_object_or_404(Experiment, pk=pk, project=project)
-
-        if experiment.status != Experiment.STATUS_RUNNING:
-            return Response(
-                {'error': f'Cannot pause experiment with status "{experiment.status}".'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        experiment.status = Experiment.STATUS_PAUSED
-        experiment.save(update_fields=['status', 'updated_at'])
-        return Response(ExperimentSerializer(experiment).data, status=status.HTTP_200_OK)
-
-    @action(detail=True, methods=['post'], url_path='complete')
-    def complete(self, request, pk=None, project_id=None):
-        """Transition experiment to completed status."""
-        project = self._project(require_editor=True)
-        experiment = get_object_or_404(Experiment, pk=pk, project=project)
-
-        if experiment.status == Experiment.STATUS_COMPLETED:
-            return Response(
-                {'error': 'Experiment is already completed.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        experiment.status = Experiment.STATUS_COMPLETED
-        if not experiment.end_date:
-            experiment.end_date = timezone.now()
-        experiment.save(update_fields=['status', 'end_date', 'updated_at'])
-        return Response(ExperimentSerializer(experiment).data, status=status.HTTP_200_OK)
-
-
-# ---------------------------------------------------------------------------
-# ExperimentVariant ViewSet (nested under Experiment)
-# ---------------------------------------------------------------------------
-
-class ExperimentVariantViewSet(_ProjectScopedMixin, viewsets.ModelViewSet):
-    """
-    CRUD for experiment variants nested under an experiment.
-    URL must include experiment_id.
-    """
-    serializer_class = ExperimentVariantSerializer
-    _write_requires_editor = True
-    _model = None
-
-    def _get_experiment(self, require_editor=False):
-        project = self._project(require_editor=require_editor)
-        experiment_id = self.kwargs['experiment_id']
-        return get_object_or_404(Experiment, id=experiment_id, project=project)
-
-    def get_queryset(self):
-        experiment = self._get_experiment()
-        return ExperimentVariant.objects.filter(experiment=experiment)
-
-    def perform_create(self, serializer):
-        experiment = self._get_experiment(require_editor=True)
-        serializer.save(experiment=experiment)
-
-    def perform_update(self, serializer):
-        self._get_experiment(require_editor=True)
-        serializer.save()
-
-    def perform_destroy(self, instance):
-        self._get_experiment(require_editor=True)
         instance.delete()

@@ -1,460 +1,179 @@
 """Tests for OwnFirebase Analytics SDK."""
 
-import pytest
 from unittest.mock import Mock, patch
-from datetime import datetime
-from ownfirebase import OwnFirebaseConfig, APIError
+
+import pytest
+
+from ownfirebase import OwnFirebaseConfig
 from ownfirebase.analytics import AnalyticsSDK
+
+BASE_URL = 'http://localhost:8000'
+PROJECT_ID = 'test-project'
+TOKEN = 'test-token'
+PROJECT_PREFIX = f'{BASE_URL}/api/projects/{PROJECT_ID}'
+
+
+def _ok(mock_request, json_data=None, status=200):
+    resp = Mock()
+    resp.ok = True
+    resp.status_code = status
+    resp.json.return_value = {} if json_data is None else json_data
+    mock_request.return_value = resp
+    return resp
+
+
+def _kwargs(mock_request):
+    return mock_request.call_args[1]
+
+
+@pytest.fixture
+def sdk():
+    config = OwnFirebaseConfig(base_url=BASE_URL, project_id=PROJECT_ID, access_token=TOKEN)
+    instance = AnalyticsSDK(config)
+    yield instance
+    instance.destroy()  # avoid leaking a background flush timer across tests
 
 
 class TestAnalyticsSDK:
-    """Tests for the Analytics SDK."""
+    """Tests for the Analytics SDK — one test per real method."""
 
-    def test_analytics_init(self):
-        """Test Analytics SDK initialization."""
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        analytics = AnalyticsSDK(config)
-        assert analytics.base_url == 'http://localhost:8000'
-        assert analytics.project_id == 'test-project'
+    def test_analytics_init(self, sdk):
+        assert sdk.base_url == BASE_URL
+        assert sdk.project_id == PROJECT_ID
 
     @patch('requests.request')
-    def test_log_event(self, mock_request):
-        """Test logging a single analytics event."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 201
-        mock_response.json.return_value = {
-            'event_id': 'event-123',
-            'event_name': 'user_signup',
-            'timestamp': '2024-01-01T00:00:00Z'
+    def test_log_event(self, mock_request, sdk):
+        _ok(mock_request, {'id': 'evt-1', 'name': 'signup', 'params': {}, 'timestamp': 't'}, status=201)
+        result = sdk.log_event('signup', params={'method': 'email'}, user_id='u1', session_id='s1')
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'POST'
+        assert kw['url'] == f'{PROJECT_PREFIX}/analytics/events/'
+        assert kw['json'] == {
+            'name': 'signup',
+            'params': {'method': 'email'},
+            'user_id': 'u1',
+            'session_id': 's1',
         }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        analytics = AnalyticsSDK(config)
-
-        result = analytics.request(
-            'POST',
-            analytics.project_url('analytics/events'),
-            json_data={
-                'event_name': 'user_signup',
-                'user_id': 'user-123',
-                'properties': {'signup_method': 'email'}
-            }
-        )
-
-        assert result['event_id'] == 'event-123'
-        assert result['event_name'] == 'user_signup'
+        assert result['id'] == 'evt-1'
 
     @patch('requests.request')
-    def test_batch_log_events(self, mock_request):
-        """Test logging multiple events in batch."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 201
-        mock_response.json.return_value = {
-            'batch_id': 'batch-456',
-            'events_count': 5,
-            'failed': 0,
-            'created_at': '2024-01-01T00:00:00Z'
+    def test_log_event_defaults(self, mock_request, sdk):
+        _ok(mock_request, {'id': 'evt-2'}, status=201)
+        sdk.log_event('page_view')
+        kw = _kwargs(mock_request)
+        assert kw['json'] == {
+            'name': 'page_view',
+            'params': {},
+            'user_id': None,
+            'session_id': None,
         }
-        mock_request.return_value = mock_response
 
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        analytics = AnalyticsSDK(config)
+    def test_add_event_to_batch_queues_without_request(self, sdk):
+        with patch('requests.request') as mock_request:
+            sdk.add_event_to_batch('click', params={'x': 1})
+            mock_request.assert_not_called()
+        assert len(sdk._event_batch) == 1
+        assert sdk._event_batch[0]['name'] == 'click'
+        assert sdk._batch_timer is not None
 
-        result = analytics.request(
-            'POST',
-            analytics.project_url('analytics/batch-events'),
-            json_data={
-                'events': [
-                    {'event_name': 'page_view', 'user_id': 'user-1'},
-                    {'event_name': 'page_view', 'user_id': 'user-2'},
-                    {'event_name': 'button_click', 'user_id': 'user-1'},
-                    {'event_name': 'form_submit', 'user_id': 'user-3'},
-                    {'event_name': 'page_view', 'user_id': 'user-4'}
-                ]
-            }
-        )
-
-        assert result['events_count'] == 5
-        assert result['failed'] == 0
+    def test_add_event_to_batch_flushes_when_full(self, sdk):
+        with patch('requests.request') as mock_request:
+            _ok(mock_request, None, status=201)
+            for i in range(sdk._BATCH_MAX_SIZE):
+                sdk.add_event_to_batch(f'evt-{i}')
+            # Reaching the max size triggers an immediate flush.
+            mock_request.assert_called_once()
+            kw = _kwargs(mock_request)
+            assert kw['method'] == 'POST'
+            assert kw['url'] == f'{PROJECT_PREFIX}/analytics/events/batch/'
+            assert len(kw['json']['events']) == sdk._BATCH_MAX_SIZE
+        assert sdk._event_batch == []
 
     @patch('requests.request')
-    def test_get_event(self, mock_request):
-        """Test retrieving a specific event."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'event_id': 'event-123',
-            'event_name': 'user_signup',
-            'user_id': 'user-123',
-            'properties': {'signup_method': 'email'},
-            'timestamp': '2024-01-01T00:00:00Z'
-        }
-        mock_request.return_value = mock_response
+    def test_flush_batch(self, mock_request, sdk):
+        sdk._event_batch = [{'name': 'a'}, {'name': 'b'}]
+        _ok(mock_request, None, status=201)
+        sdk.flush_batch()
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'POST'
+        assert kw['url'] == f'{PROJECT_PREFIX}/analytics/events/batch/'
+        assert kw['json'] == {'events': [{'name': 'a'}, {'name': 'b'}]}
+        assert sdk._event_batch == []
 
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        analytics = AnalyticsSDK(config)
-
-        result = analytics.request(
-            'GET',
-            analytics.project_url('analytics/events/event-123')
-        )
-
-        assert result['event_id'] == 'event-123'
-        assert result['user_id'] == 'user-123'
+    def test_flush_batch_empty_is_noop(self, sdk):
+        with patch('requests.request') as mock_request:
+            sdk.flush_batch()
+            mock_request.assert_not_called()
 
     @patch('requests.request')
-    def test_query_events(self, mock_request):
-        """Test querying events with filters."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'events': [
-                {'event_id': 'event-1', 'event_name': 'user_signup', 'user_id': 'user-1'},
-                {'event_id': 'event-2', 'event_name': 'user_signup', 'user_id': 'user-2'},
-                {'event_id': 'event-3', 'event_name': 'user_signup', 'user_id': 'user-3'}
-            ],
-            'total': 3,
-            'page': 1
-        }
-        mock_request.return_value = mock_response
+    def test_flush_batch_requeues_on_failure(self, mock_request, sdk):
+        from ownfirebase.errors import APIError
 
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        analytics = AnalyticsSDK(config)
-
-        result = analytics.request(
-            'GET',
-            analytics.project_url('analytics/events'),
-            query_params={'event_name': 'user_signup', 'limit': '10'}
-        )
-
-        assert result['total'] == 3
-        assert len(result['events']) == 3
+        sdk._event_batch = [{'name': 'a'}]
+        mock_request.side_effect = APIError(status=500, message='Server Error')
+        with pytest.raises(APIError):
+            sdk.flush_batch()
+        assert sdk._event_batch == [{'name': 'a'}]
 
     @patch('requests.request')
-    def test_get_event_analytics(self, mock_request):
-        """Test getting aggregated analytics for an event."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'event_name': 'user_signup',
-            'total_events': 1500,
-            'unique_users': 1200,
-            'daily_average': 50,
-            'daily_breakdown': {
-                '2024-01-01': 45,
-                '2024-01-02': 52,
-                '2024-01-03': 48
-            }
-        }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        analytics = AnalyticsSDK(config)
-
-        result = analytics.request(
-            'GET',
-            analytics.project_url('analytics/events/user_signup/analytics'),
-            query_params={'date_from': '2024-01-01', 'date_to': '2024-01-03'}
-        )
-
-        assert result['total_events'] == 1500
-        assert result['unique_users'] == 1200
+    def test_list_events(self, mock_request, sdk):
+        _ok(mock_request, {'count': 0, 'next': None, 'previous': None, 'results': []})
+        sdk.list_events(filters={'name': 'signup'})
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'GET'
+        assert kw['url'] == f'{PROJECT_PREFIX}/analytics/events/'
+        assert kw['params'] == {'name': 'signup'}
 
     @patch('requests.request')
-    def test_get_user_analytics(self, mock_request):
-        """Test getting analytics for a specific user."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'user_id': 'user-123',
-            'total_events': 45,
-            'event_breakdown': {
-                'page_view': 30,
-                'button_click': 10,
-                'form_submit': 5
-            },
-            'first_seen': '2024-01-01T00:00:00Z',
-            'last_seen': '2024-01-05T12:30:00Z'
-        }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        analytics = AnalyticsSDK(config)
-
-        result = analytics.request(
-            'GET',
-            analytics.project_url('analytics/users/user-123/analytics')
-        )
-
-        assert result['user_id'] == 'user-123'
-        assert result['total_events'] == 45
+    def test_set_user_property(self, mock_request, sdk):
+        _ok(mock_request, {'id': 'up-1', 'name': 'plan', 'value': 'pro'}, status=201)
+        result = sdk.set_user_property('plan', 'pro')
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'POST'
+        assert kw['url'] == f'{PROJECT_PREFIX}/analytics/user-properties/'
+        assert kw['json'] == {'name': 'plan', 'value': 'pro'}
+        assert result['value'] == 'pro'
 
     @patch('requests.request')
-    def test_delete_events(self, mock_request):
-        """Test deleting events."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {'deleted': 10}
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        analytics = AnalyticsSDK(config)
-
-        result = analytics.request(
-            'DELETE',
-            analytics.project_url('analytics/events'),
-            json_data={'ids': ['event-1', 'event-2', 'event-3']}
-        )
-
-        assert result['deleted'] == 10
+    def test_list_user_properties(self, mock_request, sdk):
+        _ok(mock_request, {'count': 0, 'results': []})
+        sdk.list_user_properties()
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'GET'
+        assert kw['url'] == f'{PROJECT_PREFIX}/analytics/user-properties/'
 
     @patch('requests.request')
-    def test_export_events(self, mock_request):
-        """Test exporting events as CSV/JSON."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'export_id': 'export-123',
-            'format': 'csv',
-            'download_url': 'https://example.com/exports/export-123.csv',
-            'expires_in': 3600
-        }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        analytics = AnalyticsSDK(config)
-
-        result = analytics.request(
-            'POST',
-            analytics.project_url('analytics/export'),
-            json_data={
-                'format': 'csv',
-                'date_from': '2024-01-01',
-                'date_to': '2024-01-31'
-            }
-        )
-
-        assert result['format'] == 'csv'
-        assert 'download_url' in result
-
-
-class TestAnalyticsBatch:
-    """Integration tests for batch analytics operations."""
+    def test_list_conversion_events(self, mock_request, sdk):
+        _ok(mock_request, {'count': 0, 'results': []})
+        sdk.list_conversion_events()
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'GET'
+        assert kw['url'] == f'{PROJECT_PREFIX}/analytics/conversion-events/'
 
     @patch('requests.request')
-    def test_batch_event_logging_workflow(self, mock_request):
-        """Test workflow for batching multiple events."""
-        responses = [
-            # Batch log 5 events
-            Mock(ok=True, status_code=201, json=Mock(return_value={
-                'batch_id': 'batch-1',
-                'events_count': 5,
-                'failed': 0
-            })),
-            # Batch log 3 more events
-            Mock(ok=True, status_code=201, json=Mock(return_value={
-                'batch_id': 'batch-2',
-                'events_count': 3,
-                'failed': 0
-            })),
-            # Get event count
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'event_name': 'page_view',
-                'total_events': 8
-            }))
-        ]
-        mock_request.side_effect = responses
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        analytics = AnalyticsSDK(config)
-
-        # First batch
-        batch1 = analytics.request(
-            'POST',
-            analytics.project_url('analytics/batch-events'),
-            json_data={
-                'events': [
-                    {'event_name': 'page_view', 'user_id': f'user-{i}'}
-                    for i in range(5)
-                ]
-            }
-        )
-        assert batch1['events_count'] == 5
-
-        # Second batch
-        batch2 = analytics.request(
-            'POST',
-            analytics.project_url('analytics/batch-events'),
-            json_data={
-                'events': [
-                    {'event_name': 'page_view', 'user_id': f'user-{i}'}
-                    for i in range(5, 8)
-                ]
-            }
-        )
-        assert batch2['events_count'] == 3
-
-        # Query total
-        analytics_result = analytics.request(
-            'GET',
-            analytics.project_url('analytics/events/page_view/analytics')
-        )
-        assert analytics_result['total_events'] == 8
+    def test_mark_conversion_event(self, mock_request, sdk):
+        _ok(mock_request, {'id': 'ce-1', 'name': 'purchase'}, status=201)
+        result = sdk.mark_conversion_event('purchase')
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'POST'
+        assert kw['url'] == f'{PROJECT_PREFIX}/analytics/conversion-events/'
+        assert kw['json'] == {'name': 'purchase'}
+        assert result['name'] == 'purchase'
 
     @patch('requests.request')
-    def test_event_aggregation_over_time(self, mock_request):
-        """Test aggregating events over time periods."""
-        responses = [
-            # Log events
-            Mock(ok=True, status_code=201, json=Mock(return_value={
-                'batch_id': 'batch',
-                'events_count': 10,
-                'failed': 0
-            })),
-            # Get daily breakdown
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'event_name': 'purchase',
-                'daily_breakdown': {
-                    '2024-01-01': 150,
-                    '2024-01-02': 175,
-                    '2024-01-03': 160,
-                    '2024-01-04': 190,
-                    '2024-01-05': 185
-                },
-                'total_events': 860
-            }))
-        ]
-        mock_request.side_effect = responses
+    def test_query(self, mock_request, sdk):
+        _ok(mock_request, {'metric': 'events', 'rows': []})
+        params = {'metric': 'events', 'dimension': 'country'}
+        result = sdk.query(params)
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'POST'
+        assert kw['url'] == f'{PROJECT_PREFIX}/analytics/query/'
+        assert kw['json'] == params
+        assert result['metric'] == 'events'
 
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        analytics = AnalyticsSDK(config)
-
-        # Log purchase events
-        batch = analytics.request(
-            'POST',
-            analytics.project_url('analytics/batch-events'),
-            json_data={'events': [{'event_name': 'purchase'} for _ in range(10)]}
-        )
-
-        # Get analytics
-        analytics_result = analytics.request(
-            'GET',
-            analytics.project_url('analytics/events/purchase/analytics'),
-            query_params={'date_from': '2024-01-01', 'date_to': '2024-01-05'}
-        )
-
-        assert analytics_result['total_events'] == 860
-        assert len(analytics_result['daily_breakdown']) == 5
-
-    @patch('requests.request')
-    def test_event_filtering_and_analysis(self, mock_request):
-        """Test filtering events and analyzing subsets."""
-        responses = [
-            # Log diverse events
-            Mock(ok=True, status_code=201, json=Mock(return_value={
-                'batch_id': 'batch-diverse',
-                'events_count': 20,
-                'failed': 0
-            })),
-            # Query signup events
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'events': [{'event_id': f'event-{i}', 'event_name': 'signup'}
-                          for i in range(1, 6)],
-                'total': 5
-            })),
-            # Query purchase events
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'events': [{'event_id': f'event-{i}', 'event_name': 'purchase'}
-                          for i in range(11, 16)],
-                'total': 5
-            }))
-        ]
-        mock_request.side_effect = responses
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        analytics = AnalyticsSDK(config)
-
-        # Log mixed events
-        batch = analytics.request(
-            'POST',
-            analytics.project_url('analytics/batch-events'),
-            json_data={
-                'events': [
-                    {'event_name': 'signup'},
-                    {'event_name': 'purchase'},
-                ] * 10
-            }
-        )
-
-        # Query signup events
-        signups = analytics.request(
-            'GET',
-            analytics.project_url('analytics/events'),
-            query_params={'event_name': 'signup'}
-        )
-        assert signups['total'] == 5
-
-        # Query purchase events
-        purchases = analytics.request(
-            'GET',
-            analytics.project_url('analytics/events'),
-            query_params={'event_name': 'purchase'}
-        )
-        assert purchases['total'] == 5
+    def test_destroy_cancels_timer(self, sdk):
+        with patch('requests.request'):
+            sdk.add_event_to_batch('click')
+        assert sdk._batch_timer is not None
+        sdk.destroy()
+        assert sdk._batch_timer is None

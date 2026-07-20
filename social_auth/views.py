@@ -8,8 +8,13 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import SocialAccount
-from .serializers import GoogleSignInSerializer, GitHubSignInSerializer, SocialAccountSerializer
-from .services import verify_google_id_token, verify_github_access_token
+from .serializers import (
+    GoogleSignInSerializer,
+    GitHubSignInSerializer,
+    AppleSignInSerializer,
+    SocialAccountSerializer,
+)
+from .services import verify_google_id_token, verify_github_access_token, verify_apple_id_token
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -116,6 +121,21 @@ class GitHubSignInView(APIView):
         if error:
             return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
         user, is_new = _get_or_create_user_for_social(provider_data, "github")
+        user._is_new = is_new
+        resp = _jwt_response(user)
+        return Response(resp, status=status.HTTP_201_CREATED if is_new else status.HTTP_200_OK)
+
+
+class AppleSignInView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        ser = AppleSignInSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        provider_data, error = verify_apple_id_token(ser.validated_data["id_token"])
+        if error:
+            return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
+        user, is_new = _get_or_create_user_for_social(provider_data, "apple")
         user._is_new = is_new
         resp = _jwt_response(user)
         return Response(resp, status=status.HTTP_201_CREATED if is_new else status.HTTP_200_OK)

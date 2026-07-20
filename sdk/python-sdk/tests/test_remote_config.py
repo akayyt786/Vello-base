@@ -1,299 +1,214 @@
 """Tests for OwnFirebase Remote Config SDK."""
 
-import pytest
+import time
 from unittest.mock import Mock, patch
-from ownfirebase import OwnFirebaseConfig, APIError
+
+import pytest
+
+from ownfirebase import OwnFirebaseConfig
 from ownfirebase.remote_config import RemoteConfigSDK
+
+BASE_URL = 'http://localhost:8000'
+PROJECT_ID = 'test-project'
+TOKEN = 'test-token'
+PROJECT_PREFIX = f'{BASE_URL}/api/projects/{PROJECT_ID}'
+
+
+def _ok(mock_request, json_data=None, status=200):
+    resp = Mock()
+    resp.ok = True
+    resp.status_code = status
+    resp.json.return_value = {} if json_data is None else json_data
+    mock_request.return_value = resp
+    return resp
+
+
+def _kwargs(mock_request):
+    return mock_request.call_args[1]
+
+
+@pytest.fixture
+def sdk():
+    config = OwnFirebaseConfig(base_url=BASE_URL, project_id=PROJECT_ID, access_token=TOKEN)
+    return RemoteConfigSDK(config)
 
 
 class TestRemoteConfigSDK:
-    """Tests for the Remote Config SDK."""
+    """Tests for the Remote Config SDK — one test per real method."""
 
-    def test_remote_config_init(self):
-        """Test Remote Config SDK initialization."""
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        remote_config = RemoteConfigSDK(config)
-        assert remote_config.base_url == 'http://localhost:8000'
-        assert remote_config.project_id == 'test-project'
+    def test_remote_config_init(self, sdk):
+        assert sdk.base_url == BASE_URL
+        assert sdk.project_id == PROJECT_ID
+
+    def test_set_cache_ttl(self, sdk):
+        sdk.set_cache_ttl(60000)
+        assert sdk._cache_ttl_ms == 60000
+
+    def test_clear_cache(self, sdk):
+        sdk._cache['k'] = {'value': 1, 'expires_at': time.time() + 100}
+        sdk.clear_cache()
+        assert sdk._cache == {}
 
     @patch('requests.request')
-    def test_get_config(self, mock_request):
-        """Test getting remote config."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'config': {
-                'feature_flag_new_ui': True,
-                'max_upload_size_mb': 100,
-                'api_timeout_seconds': 30
-            },
-            'version': '1.2.3',
-            'updated_at': '2024-01-01T00:00:00Z'
+    def test_list_parameters(self, mock_request, sdk):
+        _ok(mock_request, {'count': 0, 'next': None, 'previous': None, 'results': []})
+        sdk.list_parameters()
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'GET'
+        assert kw['url'] == f'{PROJECT_PREFIX}/config/parameters/'
+
+    @patch('requests.request')
+    def test_get_parameter(self, mock_request, sdk):
+        _ok(mock_request, {'id': 'p1', 'key': 'flag', 'default_value': 'true', 'value_type': 'boolean'})
+        result = sdk.get_parameter('p1')
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'GET'
+        assert kw['url'] == f'{PROJECT_PREFIX}/config/parameters/p1/'
+        assert result['key'] == 'flag'
+
+    @patch('requests.request')
+    def test_create_parameter(self, mock_request, sdk):
+        parameter = {
+            'key': 'flag', 'default_value': 'true', 'description': 'desc', 'value_type': 'boolean'
         }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        remote_config = RemoteConfigSDK(config)
-
-        result = remote_config.request(
-            'GET',
-            remote_config.project_url('remote-config')
-        )
-
-        assert result['config']['feature_flag_new_ui'] is True
-        assert result['config']['max_upload_size_mb'] == 100
+        _ok(mock_request, {**parameter, 'id': 'p1'}, status=201)
+        result = sdk.create_parameter(parameter)
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'POST'
+        assert kw['url'] == f'{PROJECT_PREFIX}/config/parameters/'
+        assert kw['json'] == parameter
+        assert result['id'] == 'p1'
 
     @patch('requests.request')
-    def test_get_config_value(self, mock_request):
-        """Test getting specific config value."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'key': 'feature_flag_new_ui',
-            'value': True,
-            'type': 'boolean'
-        }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        remote_config = RemoteConfigSDK(config)
-
-        result = remote_config.request(
-            'GET',
-            remote_config.project_url('remote-config/feature_flag_new_ui')
-        )
-
-        assert result['value'] is True
-        assert result['type'] == 'boolean'
+    def test_update_parameter(self, mock_request, sdk):
+        _ok(mock_request, {'id': 'p1', 'default_value': 'false'})
+        result = sdk.update_parameter('p1', {'default_value': 'false'})
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'PATCH'
+        assert kw['url'] == f'{PROJECT_PREFIX}/config/parameters/p1/'
+        assert kw['json'] == {'default_value': 'false'}
+        assert result['default_value'] == 'false'
 
     @patch('requests.request')
-    def test_update_config(self, mock_request):
-        """Test updating remote config."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'config': {
-                'feature_flag_new_ui': False,
-                'max_upload_size_mb': 200
-            },
-            'version': '1.2.4'
-        }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        remote_config = RemoteConfigSDK(config)
-
-        result = remote_config.request(
-            'PUT',
-            remote_config.project_url('remote-config'),
-            json_data={
-                'feature_flag_new_ui': False,
-                'max_upload_size_mb': 200
-            }
-        )
-
-        assert result['config']['feature_flag_new_ui'] is False
+    def test_delete_parameter(self, mock_request, sdk):
+        _ok(mock_request, status=204)
+        result = sdk.delete_parameter('p1')
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'DELETE'
+        assert kw['url'] == f'{PROJECT_PREFIX}/config/parameters/p1/'
+        assert result is None
 
     @patch('requests.request')
-    def test_publish_config(self, mock_request):
-        """Test publishing config changes."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'version': '1.2.4',
-            'status': 'published',
-            'published_at': '2024-01-02T00:00:00Z'
-        }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        remote_config = RemoteConfigSDK(config)
-
-        result = remote_config.request(
-            'POST',
-            remote_config.project_url('remote-config/publish'),
-            json_data={'version': '1.2.4'}
-        )
-
-        assert result['status'] == 'published'
+    def test_list_conditions(self, mock_request, sdk):
+        _ok(mock_request, [{'id': 'cond-1', 'name': 'beta_users'}])
+        result = sdk.list_conditions('p1')
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'GET'
+        assert kw['url'] == f'{PROJECT_PREFIX}/config/parameters/p1/conditions/'
+        assert result[0]['name'] == 'beta_users'
 
     @patch('requests.request')
-    def test_get_config_versions(self, mock_request):
-        """Test getting version history."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'versions': [
-                {'version': '1.2.4', 'published_at': '2024-01-02T00:00:00Z'},
-                {'version': '1.2.3', 'published_at': '2024-01-01T00:00:00Z'},
-                {'version': '1.2.2', 'published_at': '2023-12-31T00:00:00Z'}
-            ],
-            'total': 3
-        }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        remote_config = RemoteConfigSDK(config)
-
-        result = remote_config.request(
-            'GET',
-            remote_config.project_url('remote-config/versions')
-        )
-
-        assert len(result['versions']) == 3
+    def test_create_condition(self, mock_request, sdk):
+        condition = {'name': 'beta_users', 'expression': 'user.beta == true', 'value': 'true'}
+        _ok(mock_request, {**condition, 'id': 'cond-1'}, status=201)
+        result = sdk.create_condition('p1', condition)
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'POST'
+        assert kw['url'] == f'{PROJECT_PREFIX}/config/parameters/p1/conditions/'
+        assert kw['json'] == condition
+        assert result['id'] == 'cond-1'
 
     @patch('requests.request')
-    def test_rollback_config(self, mock_request):
-        """Test rolling back to previous version."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'version': '1.2.3',
-            'status': 'rolled_back',
-            'rolled_back_at': '2024-01-02T12:00:00Z'
-        }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        remote_config = RemoteConfigSDK(config)
-
-        result = remote_config.request(
-            'POST',
-            remote_config.project_url('remote-config/rollback'),
-            json_data={'version': '1.2.3'}
-        )
-
-        assert result['status'] == 'rolled_back'
-
-
-class TestRemoteConfigWorkflow:
-    """Integration tests for remote config workflows."""
+    def test_update_condition(self, mock_request, sdk):
+        _ok(mock_request, {'id': 'cond-1', 'value': 'false'})
+        result = sdk.update_condition('p1', 'cond-1', {'value': 'false'})
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'PATCH'
+        assert kw['url'] == f'{PROJECT_PREFIX}/config/parameters/p1/conditions/cond-1/'
+        assert kw['json'] == {'value': 'false'}
+        assert result['value'] == 'false'
 
     @patch('requests.request')
-    def test_config_update_publish_workflow(self, mock_request):
-        """Test complete workflow: get -> update -> publish."""
-        responses = [
-            # Get current config
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'config': {'feature_flag': True, 'timeout': 30},
-                'version': '1.0.0'
-            })),
-            # Update config
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'config': {'feature_flag': False, 'timeout': 60},
-                'version': '1.0.1'
-            })),
-            # Publish
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'version': '1.0.1',
-                'status': 'published'
-            }))
-        ]
-        mock_request.side_effect = responses
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        remote_config = RemoteConfigSDK(config)
-
-        # Get current
-        current = remote_config.request(
-            'GET',
-            remote_config.project_url('remote-config')
-        )
-
-        # Update
-        updated = remote_config.request(
-            'PUT',
-            remote_config.project_url('remote-config'),
-            json_data={'feature_flag': False, 'timeout': 60}
-        )
-
-        # Publish
-        published = remote_config.request(
-            'POST',
-            remote_config.project_url('remote-config/publish'),
-            json_data={'version': updated['version']}
-        )
-
-        assert published['status'] == 'published'
+    def test_delete_condition(self, mock_request, sdk):
+        _ok(mock_request, status=204)
+        result = sdk.delete_condition('p1', 'cond-1')
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'DELETE'
+        assert kw['url'] == f'{PROJECT_PREFIX}/config/parameters/p1/conditions/cond-1/'
+        assert result is None
 
     @patch('requests.request')
-    def test_config_version_history(self, mock_request):
-        """Test managing config versions."""
-        responses = [
-            # Get versions
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'versions': [
-                    {'version': '1.0.2', 'published_at': '2024-01-03T00:00:00Z'},
-                    {'version': '1.0.1', 'published_at': '2024-01-02T00:00:00Z'},
-                    {'version': '1.0.0', 'published_at': '2024-01-01T00:00:00Z'}
-                ],
-                'total': 3
-            })),
-            # Rollback
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'version': '1.0.1',
-                'status': 'rolled_back'
-            }))
-        ]
-        mock_request.side_effect = responses
+    def test_fetch_all_parameters(self, mock_request, sdk):
+        _ok(mock_request, {'count': 1, 'results': [{'id': 'p1', 'key': 'flag'}]})
+        result = sdk.fetch_all_parameters()
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'GET'
+        assert kw['url'] == f'{PROJECT_PREFIX}/config/parameters/'
+        assert result == [{'id': 'p1', 'key': 'flag'}]
 
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        remote_config = RemoteConfigSDK(config)
+    @patch('requests.request')
+    def test_fetch_all_parameters_uses_cache(self, mock_request, sdk):
+        _ok(mock_request, {'count': 1, 'results': [{'id': 'p1', 'key': 'flag'}]})
+        sdk.fetch_all_parameters()
+        sdk.fetch_all_parameters()  # second call should be served from cache
+        assert mock_request.call_count == 1
 
-        # Get versions
-        versions = remote_config.request(
-            'GET',
-            remote_config.project_url('remote-config/versions')
-        )
-        assert versions['total'] == 3
+    @patch('requests.request')
+    def test_fetch_all_parameters_force_refresh_bypasses_cache(self, mock_request, sdk):
+        _ok(mock_request, {'count': 1, 'results': [{'id': 'p1', 'key': 'flag'}]})
+        sdk.fetch_all_parameters()
+        sdk.fetch_all_parameters(force_refresh=True)
+        assert mock_request.call_count == 2
 
-        # Rollback to v1.0.1
-        rollback = remote_config.request(
-            'POST',
-            remote_config.project_url('remote-config/rollback'),
-            json_data={'version': '1.0.1'}
-        )
+    @patch('requests.request')
+    def test_get_parameter_by_key(self, mock_request, sdk):
+        _ok(mock_request, {'count': 1, 'results': [
+            {'id': 'p1', 'key': 'flag', 'default_value': 'true', 'value_type': 'boolean'}
+        ]})
+        result = sdk.get_parameter_by_key('flag')
+        assert result['id'] == 'p1'
 
-        assert rollback['status'] == 'rolled_back'
+    @patch('requests.request')
+    def test_get_parameter_by_key_not_found(self, mock_request, sdk):
+        _ok(mock_request, {'count': 0, 'results': []})
+        result = sdk.get_parameter_by_key('missing')
+        assert result is None
+
+    @patch('requests.request')
+    def test_get_config_value_boolean(self, mock_request, sdk):
+        _ok(mock_request, {'count': 1, 'results': [
+            {'id': 'p1', 'key': 'flag', 'default_value': 'true', 'value_type': 'boolean'}
+        ]})
+        assert sdk.get_config_value('flag') is True
+
+    @patch('requests.request')
+    def test_get_config_value_number(self, mock_request, sdk):
+        _ok(mock_request, {'count': 1, 'results': [
+            {'id': 'p1', 'key': 'limit', 'default_value': '42', 'value_type': 'number'}
+        ]})
+        assert sdk.get_config_value('limit') == 42.0
+
+    @patch('requests.request')
+    def test_get_config_value_json(self, mock_request, sdk):
+        _ok(mock_request, {'count': 1, 'results': [
+            {'id': 'p1', 'key': 'obj', 'default_value': '{"a": 1}', 'value_type': 'json'}
+        ]})
+        assert sdk.get_config_value('obj') == {'a': 1}
+
+    @patch('requests.request')
+    def test_get_config_value_missing_uses_default(self, mock_request, sdk):
+        _ok(mock_request, {'count': 0, 'results': []})
+        assert sdk.get_config_value('missing', default_value='fallback') == 'fallback'
+
+    @patch('requests.request')
+    def test_get_config_value_missing_without_default_raises(self, mock_request, sdk):
+        _ok(mock_request, {'count': 0, 'results': []})
+        with pytest.raises(ValueError, match='Config key not found'):
+            sdk.get_config_value('missing')
+
+    def test_prune_cache(self, sdk):
+        sdk._cache['expired'] = {'value': 1, 'expires_at': time.time() - 10}
+        sdk._cache['fresh'] = {'value': 2, 'expires_at': time.time() + 1000}
+        sdk.prune_cache()
+        assert 'expired' not in sdk._cache
+        assert 'fresh' in sdk._cache

@@ -78,9 +78,6 @@ urlpatterns = [
     # Stripe webhook (global — Stripe has no notion of project_id; the event
     # payload/metadata identifies which project it applies to)
     path('api/billing/webhook/', StripeWebhookView.as_view(), name='billing-webhook'),
-
-    # Remote Config Parameters API (simple key/value store)
-    path('api/projects/<uuid:project_id>/remoteconfig/', include('remoteconfig.urls', namespace='remoteconfig_params')),
 ]
 
 if settings.DEBUG:

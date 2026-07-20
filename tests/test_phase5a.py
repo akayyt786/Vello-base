@@ -58,6 +58,18 @@ def _github_provider_data(uid="gh-12345", email="githubuser@example.com"):
     }
 
 
+def _apple_provider_data(uid="apple-sub-001", email="appleuser@example.com", email_verified=True):
+    """Return a fake Apple provider_data dict (no name/avatar -- Apple's ID token never carries them)."""
+    return {
+        "provider_uid": uid,
+        "email": email,
+        "email_verified": email_verified,
+        "name": "",
+        "avatar_url": "",
+        "raw_data": {"sub": uid, "email": email},
+    }
+
+
 # ---------------------------------------------------------------------------
 # Module-level fixtures
 # ---------------------------------------------------------------------------
@@ -118,6 +130,7 @@ def viewer_client(viewer):
 
 GOOGLE_SIGNIN_URL = "/api/v1/auth/social/google/"
 GITHUB_SIGNIN_URL = "/api/v1/auth/social/github/"
+APPLE_SIGNIN_URL = "/api/v1/auth/social/apple/"
 LINKED_URL = "/api/v1/auth/social/linked/"
 UPGRADE_URL = "/api/v1/auth/upgrade/"
 SET_PASSWORD_URL = "/api/v1/auth/set-password/"
@@ -278,6 +291,119 @@ class TestSocialAuthGitHub:
 
         assert resp.status_code == 400
         assert "error" in resp.json()
+
+
+# ===========================================================================
+# TestSocialAuthApple
+# ===========================================================================
+
+@pytest.mark.django_db
+class TestSocialAuthApple:
+
+    @patch("social_auth.views.verify_apple_id_token")
+    def test_apple_signin_new_user(self, mock_verify, api_client):
+        """New user via Apple returns 201 with access + refresh tokens."""
+        mock_verify.return_value = (_apple_provider_data(), None)
+
+        resp = api_client.post(APPLE_SIGNIN_URL, {"id_token": "fake-apple-token"}, format="json")
+
+        assert resp.status_code == 201
+        data = resp.json()
+        assert "access" in data
+        assert "refresh" in data
+        assert "user_id" in data
+        assert data.get("is_new") is True
+
+    @patch("social_auth.views.verify_apple_id_token")
+    def test_apple_signin_existing_user(self, mock_verify, db):
+        """Existing user (via pre-created SocialAccount) returns 200 with the same user id."""
+        user = User.objects.create_user(
+            username="apple_existing@ex.com",
+            email="apple_existing@ex.com",
+            password=None,
+        )
+        UserProfile.objects.create(user=user, sign_in_provider="apple", email_verified=True)
+        SocialAccount.objects.create(
+            user=user,
+            provider="apple",
+            provider_uid="apple-sub-existing",
+            email="apple_existing@ex.com",
+        )
+
+        mock_verify.return_value = (
+            _apple_provider_data(uid="apple-sub-existing", email="apple_existing@ex.com"),
+            None,
+        )
+
+        client = APIClient()
+        resp = client.post(APPLE_SIGNIN_URL, {"id_token": "fake-token"}, format="json")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert str(user.id) == data["user_id"]
+        assert "access" in data
+        assert "refresh" in data
+
+    @patch("social_auth.views.verify_apple_id_token")
+    def test_apple_signin_invalid_token(self, mock_verify, api_client):
+        """Invalid/unverifiable Apple token returns 400 with an error message."""
+        mock_verify.return_value = (None, "Invalid Apple ID token.")
+
+        resp = api_client.post(APPLE_SIGNIN_URL, {"id_token": "bad-token"}, format="json")
+
+        assert resp.status_code == 400
+        assert "error" in resp.json()
+
+    @patch("social_auth.views.verify_apple_id_token")
+    def test_apple_signin_links_by_email(self, mock_verify, db):
+        """
+        When a user with the same email already exists (no SocialAccount),
+        sign-in should link a new SocialAccount and return the existing user.
+        """
+        email = "apple_link_by_email@ex.com"
+        existing_user = User.objects.create_user(
+            username=email, email=email, password="oldpass123"
+        )
+        UserProfile.objects.create(user=existing_user, sign_in_provider="password", email_verified=True)
+
+        mock_verify.return_value = (
+            _apple_provider_data(uid="apple-sub-link", email=email),
+            None,
+        )
+
+        client = APIClient()
+        resp = client.post(APPLE_SIGNIN_URL, {"id_token": "fake-token"}, format="json")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert str(existing_user.id) == data["user_id"]
+        assert SocialAccount.objects.filter(
+            user=existing_user, provider="apple", provider_uid="apple-sub-link"
+        ).exists()
+
+    @patch("social_auth.views.verify_apple_id_token")
+    def test_apple_signin_unverified_email_does_not_link(self, mock_verify, db):
+        """
+        An Apple token with email_verified=False must NOT link to an existing
+        user by email -- prevents account takeover (same rule as Google/GitHub).
+        """
+        email = "apple_unverified@ex.com"
+        existing_user = User.objects.create_user(
+            username=email, email=email, password="oldpass123"
+        )
+        UserProfile.objects.create(user=existing_user, sign_in_provider="password", email_verified=True)
+
+        mock_verify.return_value = (
+            _apple_provider_data(uid="apple-sub-unverified", email=email, email_verified=False),
+            None,
+        )
+
+        client = APIClient()
+        resp = client.post(APPLE_SIGNIN_URL, {"id_token": "fake-token"}, format="json")
+
+        assert resp.status_code == 201
+        data = resp.json()
+        assert str(existing_user.id) != data["user_id"]
 
 
 # ===========================================================================

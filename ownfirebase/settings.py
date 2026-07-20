@@ -62,7 +62,6 @@ INSTALLED_APPS = [
     'rag.apps.RAGConfig',
     'webhooks.apps.WebhooksConfig',
     'billing.apps.BillingConfig',
-    'remoteconfig.apps.RemoteConfigApp',
 ]
 
 MIDDLEWARE = [
@@ -351,10 +350,14 @@ MAGIC_LINK_BASE_URL = os.environ.get('MAGIC_LINK_BASE_URL', 'http://localhost:80
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@ownfirebase.local')
 EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
 
-# Social Auth (Google, GitHub)
+# Social Auth (Google, GitHub, Apple)
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
 GITHUB_CLIENT_ID = os.environ.get('GITHUB_CLIENT_ID', '')
 GITHUB_CLIENT_SECRET = os.environ.get('GITHUB_CLIENT_SECRET', '')
+# Apple "Sign in with Apple" client (Services) ID -- audience the ID token's
+# `aud` claim must match. Left blank disables the audience check (dev-only;
+# the RS256 signature check against Apple's JWKS still runs either way).
+APPLE_CLIENT_ID = os.environ.get('APPLE_CLIENT_ID', '')
 
 # Stripe billing (billing/stripe_service.py). STRIPE_API_BASE lets local dev
 # and tests point at a stripe-mock instance instead of the real Stripe API.

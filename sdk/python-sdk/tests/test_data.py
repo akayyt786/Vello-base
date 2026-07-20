@@ -1,437 +1,169 @@
 """Tests for OwnFirebase Data SDK (CRUD operations)."""
 
-import pytest
 from unittest.mock import Mock, patch
-from ownfirebase import OwnFirebaseConfig, APIError
+
+import pytest
+
+from ownfirebase import OwnFirebaseConfig
 from ownfirebase.data import DataSDK
+
+BASE_URL = 'http://localhost:8000'
+PROJECT_ID = 'test-project'
+TOKEN = 'test-token'
+PROJECT_PREFIX = f'{BASE_URL}/api/projects/{PROJECT_ID}'
+
+
+def _ok(mock_request, json_data=None, status=200):
+    resp = Mock()
+    resp.ok = True
+    resp.status_code = status
+    resp.json.return_value = {} if json_data is None else json_data
+    mock_request.return_value = resp
+    return resp
+
+
+def _kwargs(mock_request):
+    return mock_request.call_args[1]
+
+
+@pytest.fixture
+def sdk():
+    config = OwnFirebaseConfig(base_url=BASE_URL, project_id=PROJECT_ID, access_token=TOKEN)
+    return DataSDK(config)
 
 
 class TestDataSDK:
-    """Tests for the Data SDK."""
+    """Tests for the Data SDK — one test per real method."""
 
-    def test_data_init(self):
-        """Test Data SDK initialization."""
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        data = DataSDK(config)
-        assert data.base_url == 'http://localhost:8000'
-        assert data.project_id == 'test-project'
+    def test_data_init(self, sdk):
+        assert sdk.base_url == BASE_URL
+        assert sdk.project_id == PROJECT_ID
 
     @patch('requests.request')
-    def test_create_document(self, mock_request):
-        """Test creating a new document."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 201
-        mock_response.json.return_value = {
-            'id': 'doc-123',
-            'collection': 'users',
-            'data': {'name': 'John', 'email': 'john@example.com'},
-            'created_at': '2024-01-01T00:00:00Z'
-        }
-        mock_request.return_value = mock_response
+    def test_list_collections(self, mock_request, sdk):
+        _ok(mock_request, [{'id': 'c1', 'name': 'users', 'document_count': 3}])
+        result = sdk.list_collections()
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'GET'
+        assert kw['url'] == f'{PROJECT_PREFIX}/collections/'
+        assert result[0]['name'] == 'users'
 
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        data = DataSDK(config)
+    @patch('requests.request')
+    def test_create_collection(self, mock_request, sdk):
+        _ok(mock_request, {'id': 'c1', 'name': 'users', 'document_count': 0}, status=201)
+        result = sdk.create_collection('users')
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'POST'
+        assert kw['url'] == f'{PROJECT_PREFIX}/collections/'
+        assert kw['json'] == {'name': 'users'}
+        assert result['name'] == 'users'
 
-        result = data.request(
-            'POST',
-            data.project_url('data/collections/users/documents'),
-            json_data={'name': 'John', 'email': 'john@example.com'}
-        )
+    @patch('requests.request')
+    def test_list_documents(self, mock_request, sdk):
+        _ok(mock_request, {'count': 0, 'next': None, 'previous': None, 'results': []})
+        sdk.list_documents('users', filters={'status': 'active'})
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'GET'
+        assert kw['url'] == f'{PROJECT_PREFIX}/collections/users/docs/'
+        assert kw['params'] == {'status': 'active'}
 
-        assert result['id'] == 'doc-123'
+    @patch('requests.request')
+    def test_list_documents_subcollection_path(self, mock_request, sdk):
+        _ok(mock_request, {'count': 0, 'results': []})
+        sdk.list_documents('users/uid/posts')
+        kw = _kwargs(mock_request)
+        assert kw['url'] == f'{PROJECT_PREFIX}/collections/users/uid/posts/docs/'
+
+    @patch('requests.request')
+    def test_get_document(self, mock_request, sdk):
+        _ok(mock_request, {
+            'id': 'doc-1', 'collection': 'users', 'data': {'name': 'John'},
+            'created_at': '2024-01-01T00:00:00Z', 'updated_at': '2024-01-01T00:00:00Z',
+        })
+        result = sdk.get_document('users', 'doc-1')
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'GET'
+        assert kw['url'] == f'{PROJECT_PREFIX}/collections/users/docs/doc-1/'
         assert result['data']['name'] == 'John'
 
     @patch('requests.request')
-    def test_get_document(self, mock_request):
-        """Test retrieving a document."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'id': 'doc-123',
-            'collection': 'users',
-            'data': {'name': 'John', 'email': 'john@example.com'},
-            'created_at': '2024-01-01T00:00:00Z',
-            'updated_at': '2024-01-02T00:00:00Z'
-        }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        data = DataSDK(config)
-
-        result = data.request(
-            'GET',
-            data.project_url('data/collections/users/documents/doc-123')
-        )
-
-        assert result['id'] == 'doc-123'
-        assert result['data']['email'] == 'john@example.com'
+    def test_create_document(self, mock_request, sdk):
+        _ok(mock_request, {'id': 'doc-1', 'collection': 'users', 'data': {'name': 'John'}}, status=201)
+        result = sdk.create_document('users', {'name': 'John'})
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'POST'
+        assert kw['url'] == f'{PROJECT_PREFIX}/collections/users/docs/'
+        assert kw['json'] == {'data': {'name': 'John'}}
+        assert result['id'] == 'doc-1'
 
     @patch('requests.request')
-    def test_update_document(self, mock_request):
-        """Test updating a document."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'id': 'doc-123',
-            'collection': 'users',
-            'data': {'name': 'John', 'email': 'newemail@example.com'},
-            'updated_at': '2024-01-03T00:00:00Z'
-        }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        data = DataSDK(config)
-
-        result = data.request(
-            'PUT',
-            data.project_url('data/collections/users/documents/doc-123'),
-            json_data={'email': 'newemail@example.com'}
-        )
-
-        assert result['data']['email'] == 'newemail@example.com'
+    def test_update_document(self, mock_request, sdk):
+        _ok(mock_request, {'id': 'doc-1', 'data': {'name': 'Jane'}})
+        result = sdk.update_document('users', 'doc-1', {'name': 'Jane'})
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'PATCH'
+        assert kw['url'] == f'{PROJECT_PREFIX}/collections/users/docs/doc-1/'
+        assert kw['json'] == {'data': {'name': 'Jane'}}
+        assert result['data']['name'] == 'Jane'
 
     @patch('requests.request')
-    def test_delete_document(self, mock_request):
-        """Test deleting a document."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 204
-        mock_request.return_value = mock_response
+    def test_replace_document(self, mock_request, sdk):
+        _ok(mock_request, {'id': 'doc-1', 'data': {'name': 'Jane'}})
+        result = sdk.replace_document('users', 'doc-1', {'name': 'Jane'})
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'PUT'
+        assert kw['url'] == f'{PROJECT_PREFIX}/collections/users/docs/doc-1/'
+        assert kw['json'] == {'data': {'name': 'Jane'}}
+        assert result['data']['name'] == 'Jane'
 
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        data = DataSDK(config)
-
-        result = data.request(
-            'DELETE',
-            data.project_url('data/collections/users/documents/doc-123')
-        )
-
+    @patch('requests.request')
+    def test_delete_document(self, mock_request, sdk):
+        _ok(mock_request, status=204)
+        result = sdk.delete_document('users', 'doc-1')
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'DELETE'
+        assert kw['url'] == f'{PROJECT_PREFIX}/collections/users/docs/doc-1/'
         assert result is None
 
     @patch('requests.request')
-    def test_list_documents(self, mock_request):
-        """Test listing documents in a collection."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'documents': [
-                {'id': 'doc-1', 'data': {'name': 'John'}},
-                {'id': 'doc-2', 'data': {'name': 'Jane'}},
-                {'id': 'doc-3', 'data': {'name': 'Bob'}}
-            ],
-            'total': 3,
-            'page': 1
-        }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        data = DataSDK(config)
-
-        result = data.request(
-            'GET',
-            data.project_url('data/collections/users/documents')
-        )
-
-        assert len(result['documents']) == 3
-        assert result['total'] == 3
-
-    @patch('requests.request')
-    def test_query_documents(self, mock_request):
-        """Test querying documents with filters."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'documents': [
-                {'id': 'doc-1', 'data': {'name': 'John', 'age': 30}},
-                {'id': 'doc-3', 'data': {'name': 'Bob', 'age': 30}}
-            ],
-            'total': 2
-        }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        data = DataSDK(config)
-
-        result = data.request(
-            'GET',
-            data.project_url('data/collections/users/documents'),
-            query_params={'where': 'age', 'operator': '==', 'value': '30'}
-        )
-
-        assert result['total'] == 2
-
-    @patch('requests.request')
-    def test_get_nonexistent_document(self, mock_request):
-        """Test retrieving a non-existent document."""
-        mock_response = Mock()
-        mock_response.ok = False
-        mock_response.status_code = 404
-        mock_response.reason = 'Not Found'
-        mock_response.json.return_value = {'error': 'Document not found'}
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        data = DataSDK(config)
-
-        with pytest.raises(APIError) as exc_info:
-            data.request(
-                'GET',
-                data.project_url('data/collections/users/documents/nonexistent')
-            )
-
-        assert exc_info.value.status == 404
-
-    @patch('requests.request')
-    def test_list_documents_with_pagination(self, mock_request):
-        """Test listing documents with pagination."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'documents': [
-                {'id': f'doc-{i}', 'data': {'name': f'User {i}'}}
-                for i in range(10)
-            ],
-            'total': 100,
-            'page': 1,
-            'page_size': 10,
-            'has_next': True
-        }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        data = DataSDK(config)
-
-        result = data.request(
-            'GET',
-            data.project_url('data/collections/users/documents'),
-            query_params={'page': '1', 'limit': '10'}
-        )
-
-        assert len(result['documents']) == 10
-        assert result['total'] == 100
-        assert result['has_next'] is True
-
-    @patch('requests.request')
-    def test_batch_create_documents(self, mock_request):
-        """Test creating multiple documents in batch."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 201
-        mock_response.json.return_value = {
-            'created': 3,
-            'documents': [
-                {'id': 'doc-1', 'data': {'name': 'User 1'}},
-                {'id': 'doc-2', 'data': {'name': 'User 2'}},
-                {'id': 'doc-3', 'data': {'name': 'User 3'}}
-            ]
-        }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        data = DataSDK(config)
-
-        result = data.request(
-            'POST',
-            data.project_url('data/collections/users/batch'),
-            json_data={
-                'documents': [
-                    {'name': 'User 1'},
-                    {'name': 'User 2'},
-                    {'name': 'User 3'}
-                ]
-            }
-        )
-
-        assert result['created'] == 3
-
-    @patch('requests.request')
-    def test_batch_delete_documents(self, mock_request):
-        """Test deleting multiple documents in batch."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {'deleted': 3}
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        data = DataSDK(config)
-
-        result = data.request(
-            'POST',
-            data.project_url('data/collections/users/batch-delete'),
-            json_data={'ids': ['doc-1', 'doc-2', 'doc-3']}
-        )
-
-        assert result['deleted'] == 3
-
-
-class TestDataCRUD:
-    """Integration tests for complete CRUD workflows."""
-
-    @patch('requests.request')
-    def test_complete_crud_workflow(self, mock_request):
-        """Test complete create-read-update-delete workflow."""
-        responses = [
-            # Create
-            Mock(ok=True, status_code=201, json=Mock(return_value={
-                'id': 'doc-workflow-1',
-                'data': {'name': 'Test User', 'email': 'test@example.com'},
-                'created_at': '2024-01-01T00:00:00Z'
-            })),
-            # Read
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'id': 'doc-workflow-1',
-                'data': {'name': 'Test User', 'email': 'test@example.com'},
-                'updated_at': '2024-01-01T00:00:00Z'
-            })),
-            # Update
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'id': 'doc-workflow-1',
-                'data': {'name': 'Updated User', 'email': 'updated@example.com'},
-                'updated_at': '2024-01-02T00:00:00Z'
-            })),
-            # Delete
-            Mock(ok=True, status_code=204)
+    def test_write_batch(self, mock_request, sdk):
+        operations = [
+            {'op': 'set', 'collection': 'users', 'doc_id': 'doc-1', 'data': {'name': 'X'}},
+            {'op': 'delete', 'collection': 'users', 'doc_id': 'doc-2'},
         ]
-        mock_request.side_effect = responses
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        data = DataSDK(config)
-
-        # Create
-        create_result = data.request(
-            'POST',
-            data.project_url('data/collections/users/documents'),
-            json_data={'name': 'Test User', 'email': 'test@example.com'}
-        )
-        doc_id = create_result['id']
-
-        # Read
-        read_result = data.request(
-            'GET',
-            data.project_url(f'data/collections/users/documents/{doc_id}')
-        )
-        assert read_result['data']['name'] == 'Test User'
-
-        # Update
-        update_result = data.request(
-            'PUT',
-            data.project_url(f'data/collections/users/documents/{doc_id}'),
-            json_data={'name': 'Updated User', 'email': 'updated@example.com'}
-        )
-        assert update_result['data']['name'] == 'Updated User'
-
-        # Delete
-        delete_result = data.request(
-            'DELETE',
-            data.project_url(f'data/collections/users/documents/{doc_id}')
-        )
-        assert delete_result is None
+        _ok(mock_request, {'written': 2, 'errors': []})
+        result = sdk.write_batch(operations)
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'POST'
+        assert kw['url'] == f'{PROJECT_PREFIX}/transaction/'
+        assert kw['json'] == {'operations': operations}
+        assert result['written'] == 2
 
     @patch('requests.request')
-    def test_multi_collection_operations(self, mock_request):
-        """Test operations across multiple collections."""
-        responses = [
-            # Create in users
-            Mock(ok=True, status_code=201, json=Mock(return_value={
-                'id': 'user-1',
-                'data': {'name': 'John'}
-            })),
-            # Create in posts
-            Mock(ok=True, status_code=201, json=Mock(return_value={
-                'id': 'post-1',
-                'data': {'title': 'First Post', 'author_id': 'user-1'}
-            })),
-            # List posts by author
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'documents': [
-                    {'id': 'post-1', 'data': {'title': 'First Post'}}
-                ],
-                'total': 1
-            }))
-        ]
-        mock_request.side_effect = responses
+    def test_get_rules(self, mock_request, sdk):
+        _ok(mock_request, {'rules': 'allow read, write: if true;'})
+        result = sdk.get_rules()
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'GET'
+        assert kw['url'] == f'{BASE_URL}/api/v1/rules/'
+        assert 'rules' in result
 
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        data = DataSDK(config)
+    @patch('requests.request')
+    def test_update_rules(self, mock_request, sdk):
+        _ok(mock_request, {'rules': 'allow read: if true;'})
+        result = sdk.update_rules('allow read: if true;')
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'POST'
+        assert kw['url'] == f'{BASE_URL}/api/v1/rules/'
+        assert kw['json'] == {'rules': 'allow read: if true;'}
+        assert result['rules'] == 'allow read: if true;'
 
-        # Create user
-        user = data.request(
-            'POST',
-            data.project_url('data/collections/users/documents'),
-            json_data={'name': 'John'}
-        )
-
-        # Create post
-        post = data.request(
-            'POST',
-            data.project_url('data/collections/posts/documents'),
-            json_data={'title': 'First Post', 'author_id': user['id']}
-        )
-
-        # List posts by author
-        posts = data.request(
-            'GET',
-            data.project_url('data/collections/posts/documents'),
-            query_params={'where': 'author_id', 'operator': '==', 'value': user['id']}
-        )
-
-        assert posts['total'] == 1
+    @patch('requests.request')
+    def test_test_rules(self, mock_request, sdk):
+        _ok(mock_request, {'allowed': True})
+        result = sdk.test_rules('allow read: if true;', {'auth': {'uid': 'u1'}})
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'POST'
+        assert kw['url'] == f'{BASE_URL}/api/v1/rules/test/'
+        assert kw['json'] == {'rule': 'allow read: if true;', 'context': {'auth': {'uid': 'u1'}}}
+        assert result['allowed'] is True

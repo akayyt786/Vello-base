@@ -1,303 +1,129 @@
 """Tests for OwnFirebase Functions SDK."""
 
-import pytest
 from unittest.mock import Mock, patch
-from ownfirebase import OwnFirebaseConfig, APIError
+
+import pytest
+
+from ownfirebase import OwnFirebaseConfig
 from ownfirebase.functions import FunctionsSDK
+
+BASE_URL = 'http://localhost:8000'
+PROJECT_ID = 'test-project'
+TOKEN = 'test-token'
+PROJECT_PREFIX = f'{BASE_URL}/api/projects/{PROJECT_ID}'
+
+
+def _ok(mock_request, json_data=None, status=200):
+    resp = Mock()
+    resp.ok = True
+    resp.status_code = status
+    resp.json.return_value = {} if json_data is None else json_data
+    mock_request.return_value = resp
+    return resp
+
+
+def _kwargs(mock_request):
+    return mock_request.call_args[1]
+
+
+@pytest.fixture
+def sdk():
+    config = OwnFirebaseConfig(base_url=BASE_URL, project_id=PROJECT_ID, access_token=TOKEN)
+    return FunctionsSDK(config)
 
 
 class TestFunctionsSDK:
-    """Tests for the Cloud Functions SDK."""
+    """Tests for the Cloud Functions SDK — one test per real method."""
 
-    def test_functions_init(self):
-        """Test Functions SDK initialization."""
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        functions = FunctionsSDK(config)
-        assert functions.base_url == 'http://localhost:8000'
-        assert functions.project_id == 'test-project'
+    def test_functions_init(self, sdk):
+        assert sdk.base_url == BASE_URL
+        assert sdk.project_id == PROJECT_ID
 
     @patch('requests.request')
-    def test_call_function(self, mock_request):
-        """Test calling a cloud function."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'result': 'success',
-            'data': {'sum': 15},
-            'execution_time_ms': 125
-        }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        functions = FunctionsSDK(config)
-
-        result = functions.request(
-            'POST',
-            functions.project_url('functions/add'),
-            json_data={'a': 5, 'b': 10}
-        )
-
-        assert result['result'] == 'success'
-        assert result['data']['sum'] == 15
+    def test_list_functions(self, mock_request, sdk):
+        _ok(mock_request, [{'id': 'f1', 'name': 'add'}])
+        result = sdk.list_functions()
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'GET'
+        assert kw['url'] == f'{PROJECT_PREFIX}/functions/'
+        assert result[0]['name'] == 'add'
 
     @patch('requests.request')
-    def test_list_functions(self, mock_request):
-        """Test listing deployed functions."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'functions': [
-                {
-                    'name': 'add',
-                    'runtime': 'python3.9',
-                    'status': 'active',
-                    'url': 'https://api.example.com/functions/add'
-                },
-                {
-                    'name': 'process_image',
-                    'runtime': 'python3.9',
-                    'status': 'active',
-                    'url': 'https://api.example.com/functions/process_image'
-                }
-            ],
-            'total': 2
-        }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        functions = FunctionsSDK(config)
-
-        result = functions.request(
-            'GET',
-            functions.project_url('functions')
-        )
-
-        assert len(result['functions']) == 2
-
-    @patch('requests.request')
-    def test_get_function_info(self, mock_request):
-        """Test getting function metadata."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'name': 'add',
-            'runtime': 'python3.9',
-            'status': 'active',
-            'memory': 256,
-            'timeout': 60,
-            'created_at': '2024-01-01T00:00:00Z',
-            'updated_at': '2024-01-05T12:00:00Z',
-            'invocation_count': 1500
-        }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        functions = FunctionsSDK(config)
-
-        result = functions.request(
-            'GET',
-            functions.project_url('functions/add')
-        )
-
+    def test_get_function(self, mock_request, sdk):
+        _ok(mock_request, {'id': 'f1', 'name': 'add', 'runtime': 'python3.11'})
+        result = sdk.get_function('add')
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'GET'
+        assert kw['url'] == f'{PROJECT_PREFIX}/functions/add/'
         assert result['name'] == 'add'
-        assert result['memory'] == 256
 
     @patch('requests.request')
-    def test_call_function_with_error(self, mock_request):
-        """Test calling function that returns error."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'result': 'error',
-            'error': 'Division by zero',
-            'execution_time_ms': 50
+    def test_create_function(self, mock_request, sdk):
+        definition = {
+            'name': 'add',
+            'runtime': 'python3.11',
+            'entry_point': 'main.handler',
+            'source_code': 'def handler(): pass',
+            'is_active': True,
         }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        functions = FunctionsSDK(config)
-
-        result = functions.request(
-            'POST',
-            functions.project_url('functions/divide'),
-            json_data={'a': 10, 'b': 0}
-        )
-
-        assert result['result'] == 'error'
+        _ok(mock_request, {**definition, 'id': 'f1'}, status=201)
+        result = sdk.create_function(definition)
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'POST'
+        assert kw['url'] == f'{PROJECT_PREFIX}/functions/'
+        assert kw['json'] == definition
+        assert result['id'] == 'f1'
 
     @patch('requests.request')
-    def test_function_not_found(self, mock_request):
-        """Test calling non-existent function."""
-        mock_response = Mock()
-        mock_response.ok = False
-        mock_response.status_code = 404
-        mock_response.reason = 'Not Found'
-        mock_response.json.return_value = {'error': 'Function not found'}
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        functions = FunctionsSDK(config)
-
-        with pytest.raises(APIError) as exc_info:
-            functions.request(
-                'POST',
-                functions.project_url('functions/nonexistent'),
-                json_data={}
-            )
-
-        assert exc_info.value.status == 404
+    def test_update_function(self, mock_request, sdk):
+        updates = {'is_active': False}
+        _ok(mock_request, {'id': 'f1', 'name': 'add', 'is_active': False})
+        result = sdk.update_function('add', updates)
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'PUT'
+        assert kw['url'] == f'{PROJECT_PREFIX}/functions/add/'
+        assert kw['json'] == updates
+        assert result['is_active'] is False
 
     @patch('requests.request')
-    def test_get_function_logs(self, mock_request):
-        """Test retrieving function execution logs."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'function_name': 'process_data',
-            'logs': [
-                {'timestamp': '2024-01-01T00:00:00Z', 'level': 'INFO', 'message': 'Starting'},
-                {'timestamp': '2024-01-01T00:00:01Z', 'level': 'INFO', 'message': 'Processing...'},
-                {'timestamp': '2024-01-01T00:00:02Z', 'level': 'INFO', 'message': 'Complete'}
-            ],
-            'total': 3
-        }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        functions = FunctionsSDK(config)
-
-        result = functions.request(
-            'GET',
-            functions.project_url('functions/process_data/logs')
-        )
-
-        assert len(result['logs']) == 3
-
-
-class TestFunctionsWorkflow:
-    """Integration tests for functions workflows."""
+    def test_delete_function(self, mock_request, sdk):
+        _ok(mock_request, status=204)
+        result = sdk.delete_function('add')
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'DELETE'
+        assert kw['url'] == f'{PROJECT_PREFIX}/functions/add/'
+        assert result is None
 
     @patch('requests.request')
-    def test_function_call_workflow(self, mock_request):
-        """Test calling multiple functions in sequence."""
-        responses = [
-            # Call function 1
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'result': 'success',
-                'data': {'value': 100}
-            })),
-            # Call function 2 with result from function 1
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'result': 'success',
-                'data': {'value': 200}
-            })),
-            # Call function 3
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'result': 'success',
-                'data': {'value': 300}
-            }))
-        ]
-        mock_request.side_effect = responses
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        functions = FunctionsSDK(config)
-
-        # Call function 1
-        result1 = functions.request(
-            'POST',
-            functions.project_url('functions/fetch_data'),
-            json_data={'id': '123'}
-        )
-
-        # Call function 2 with result from function 1
-        result2 = functions.request(
-            'POST',
-            functions.project_url('functions/process_data'),
-            json_data={'data': result1['data']}
-        )
-
-        # Call function 3
-        result3 = functions.request(
-            'POST',
-            functions.project_url('functions/save_result'),
-            json_data={'result': result2['data']}
-        )
-
-        assert result3['result'] == 'success'
+    def test_invoke(self, mock_request, sdk):
+        _ok(mock_request, {'invocation_id': 'inv-1', 'status': 'success', 'result': {'sum': 15}})
+        result = sdk.invoke('add', {'a': 5, 'b': 10})
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'POST'
+        assert kw['url'] == f'{PROJECT_PREFIX}/functions/add/invoke/'
+        assert kw['json'] == {'data': {'a': 5, 'b': 10}}
+        assert result['result']['sum'] == 15
 
     @patch('requests.request')
-    def test_concurrent_function_calls(self, mock_request):
-        """Test calling multiple functions."""
-        responses = [
-            # Get user
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'result': 'success',
-                'data': {'name': 'John', 'id': 'user-1'}
-            })),
-            # Get user posts
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'result': 'success',
-                'data': {'posts': [{'id': 'post-1', 'title': 'Hello'}]}
-            }))
-        ]
-        mock_request.side_effect = responses
+    def test_invoke_without_payload(self, mock_request, sdk):
+        _ok(mock_request, {'invocation_id': 'inv-2', 'status': 'success'})
+        sdk.invoke('ping')
+        kw = _kwargs(mock_request)
+        assert kw['json'] == {'data': {}}
 
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        functions = FunctionsSDK(config)
+    @patch('requests.request')
+    def test_get_logs(self, mock_request, sdk):
+        _ok(mock_request, [{'id': 'log-1', 'level': 'INFO', 'message': 'started'}])
+        result = sdk.get_logs('add', limit=10, since='2024-01-01T00:00:00Z')
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'GET'
+        assert kw['url'] == f'{PROJECT_PREFIX}/functions/add/logs/'
+        assert kw['params'] == {'limit': '10', 'since': '2024-01-01T00:00:00Z'}
+        assert result[0]['level'] == 'INFO'
 
-        # Get user
-        user = functions.request(
-            'POST',
-            functions.project_url('functions/get_user'),
-            json_data={'user_id': 'user-1'}
-        )
-
-        # Get user's posts
-        posts = functions.request(
-            'POST',
-            functions.project_url('functions/get_user_posts'),
-            json_data={'user_id': user['data']['id']}
-        )
-
-        assert len(posts['data']['posts']) == 1
+    @patch('requests.request')
+    def test_get_logs_without_options(self, mock_request, sdk):
+        _ok(mock_request, [])
+        sdk.get_logs('add')
+        kw = _kwargs(mock_request)
+        assert kw['params'] == {}

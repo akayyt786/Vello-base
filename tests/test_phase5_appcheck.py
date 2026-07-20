@@ -324,10 +324,14 @@ class TestTokenExchange:
         assert resp.status_code == 400
         assert 'error' in resp.json()
 
-    def test_exchange_production_provider_configured(
+    def test_exchange_production_provider_configured_but_incomplete(
         self, authenticated_client, test_project
     ):
-        """recaptcha_v3 with a matching AppCheckConfig → 501 (placeholder)."""
+        """
+        recaptcha_v3 is now wired (see tests/test_app_check_production_providers.py
+        for its full verification tests) -- a config missing the secret_key still
+        correctly returns 400, not the old 501 placeholder.
+        """
         AppCheckConfig.objects.create(
             project=test_project,
             platform='web',
@@ -344,7 +348,7 @@ class TestTokenExchange:
             },
             format='json',
         )
-        assert resp.status_code == 501
+        assert resp.status_code == 400
         assert 'error' in resp.json()
 
     def test_exchange_requires_auth(self, api_client, test_project):

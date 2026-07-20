@@ -1,300 +1,154 @@
 """Tests for OwnFirebase Storage SDK."""
 
+from unittest.mock import Mock, patch
+
 import pytest
-from unittest.mock import Mock, patch, MagicMock
-from ownfirebase import OwnFirebaseConfig, APIError
+
+from ownfirebase import OwnFirebaseConfig
 from ownfirebase.storage import StorageSDK
+
+BASE_URL = 'http://localhost:8000'
+PROJECT_ID = 'test-project'
+TOKEN = 'test-token'
+PROJECT_PREFIX = f'{BASE_URL}/api/projects/{PROJECT_ID}'
+
+
+def _ok(mock_request, json_data=None, status=200):
+    resp = Mock()
+    resp.ok = True
+    resp.status_code = status
+    resp.json.return_value = {} if json_data is None else json_data
+    mock_request.return_value = resp
+    return resp
+
+
+def _kwargs(mock_request):
+    return mock_request.call_args[1]
+
+
+@pytest.fixture
+def sdk():
+    config = OwnFirebaseConfig(base_url=BASE_URL, project_id=PROJECT_ID, access_token=TOKEN)
+    return StorageSDK(config)
 
 
 class TestStorageSDK:
-    """Tests for the Storage SDK."""
+    """Tests for the Storage SDK — one test per real method."""
 
-    def test_storage_init(self):
-        """Test Storage SDK initialization."""
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        storage = StorageSDK(config)
-        assert storage.base_url == 'http://localhost:8000'
-        assert storage.project_id == 'test-project'
+    def test_storage_init(self, sdk):
+        assert sdk.base_url == BASE_URL
+        assert sdk.project_id == PROJECT_ID
 
     @patch('requests.request')
-    def test_upload_file(self, mock_request):
-        """Test uploading a file."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 201
-        mock_response.json.return_value = {
-            'file_id': 'file-123',
-            'filename': 'test.txt',
-            'size': 1024,
-            'url': 'https://storage.example.com/files/file-123',
-            'content_type': 'text/plain'
-        }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
+    def test_get_upload_url(self, mock_request, sdk):
+        _ok(mock_request, {
+            'file_id': 'file-1',
+            'upload_url': 'https://minio.example.com/presigned',
+            'method': 'PUT',
+            'expires_in': 3600,
+            'path': 'docs/a.txt',
+            'bucket': 'my-bucket',
+        }, status=201)
+        result = sdk.get_upload_url(
+            path='docs/a.txt', content_type='text/plain', size=1024, metadata={'k': 'v'}
         )
-        storage = StorageSDK(config)
-
-        result = storage.request(
-            'POST',
-            storage.project_url('storage/upload'),
-            json_data={'filename': 'test.txt', 'content_type': 'text/plain'}
-        )
-
-        assert result['file_id'] == 'file-123'
-        assert result['url'] == 'https://storage.example.com/files/file-123'
-
-    @patch('requests.request')
-    def test_get_file_info(self, mock_request):
-        """Test getting file metadata."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'file_id': 'file-123',
-            'filename': 'test.txt',
-            'size': 1024,
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'POST'
+        assert kw['url'] == f'{PROJECT_PREFIX}/storage/upload-url/'
+        assert kw['json'] == {
+            'path': 'docs/a.txt',
             'content_type': 'text/plain',
-            'created_at': '2024-01-01T00:00:00Z',
-            'updated_at': '2024-01-02T00:00:00Z'
+            'size': 1024,
+            'metadata': {'k': 'v'},
         }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        storage = StorageSDK(config)
-
-        result = storage.request(
-            'GET',
-            storage.project_url('storage/files/file-123')
-        )
-
-        assert result['file_id'] == 'file-123'
-        assert result['size'] == 1024
+        assert result['file_id'] == 'file-1'
 
     @patch('requests.request')
-    def test_delete_file(self, mock_request):
-        """Test deleting a file."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 204
-        mock_request.return_value = mock_response
+    def test_confirm_upload(self, mock_request, sdk):
+        _ok(mock_request, {'id': 'file-1', 'name': 'a.txt', 'size': 1024})
+        result = sdk.confirm_upload('file-1')
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'POST'
+        assert kw['url'] == f'{PROJECT_PREFIX}/storage/confirm/'
+        assert kw['json'] == {'file_id': 'file-1'}
+        assert result['id'] == 'file-1'
 
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        storage = StorageSDK(config)
+    @patch('requests.request')
+    def test_list_files(self, mock_request, sdk):
+        _ok(mock_request, {'count': 1, 'next': None, 'previous': None, 'results': []})
+        sdk.list_files(prefix='docs/')
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'GET'
+        assert kw['url'] == f'{PROJECT_PREFIX}/storage/files/'
+        assert kw['params'] == {'prefix': 'docs/'}
 
-        result = storage.request(
-            'DELETE',
-            storage.project_url('storage/files/file-123')
-        )
+    @patch('requests.request')
+    def test_list_files_without_prefix(self, mock_request, sdk):
+        _ok(mock_request, {'count': 0, 'results': []})
+        sdk.list_files()
+        kw = _kwargs(mock_request)
+        assert kw['params'] == {}
 
+    @patch('requests.request')
+    def test_get_file(self, mock_request, sdk):
+        _ok(mock_request, {'id': 'file-1', 'name': 'a.txt'})
+        result = sdk.get_file('docs/a.txt')
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'GET'
+        assert kw['url'] == f'{PROJECT_PREFIX}/storage/files/docs/a.txt/'
+        assert result['name'] == 'a.txt'
+
+    @patch('requests.request')
+    def test_delete_file(self, mock_request, sdk):
+        _ok(mock_request, status=204)
+        result = sdk.delete_file('docs/a.txt')
+        kw = _kwargs(mock_request)
+        assert kw['method'] == 'DELETE'
+        assert kw['url'] == f'{PROJECT_PREFIX}/storage/files/docs/a.txt/'
         assert result is None
 
+    @patch('requests.put')
     @patch('requests.request')
-    def test_list_files(self, mock_request):
-        """Test listing files in storage."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'files': [
-                {'file_id': 'file-1', 'filename': 'image.jpg'},
-                {'file_id': 'file-2', 'filename': 'document.pdf'},
-                {'file_id': 'file-3', 'filename': 'video.mp4'}
-            ],
-            'total': 3
+    def test_upload_helper(self, mock_request, mock_put, sdk):
+        upload_url_resp = Mock()
+        upload_url_resp.ok = True
+        upload_url_resp.status_code = 201
+        upload_url_resp.json.return_value = {
+            'file_id': 'file-1',
+            'upload_url': 'https://minio.example.com/presigned',
+            'method': 'PUT',
+            'expires_in': 3600,
+            'path': 'docs/a.txt',
+            'bucket': 'my-bucket',
         }
-        mock_request.return_value = mock_response
+        confirm_resp = Mock()
+        confirm_resp.ok = True
+        confirm_resp.status_code = 200
+        confirm_resp.json.return_value = {'id': 'file-1', 'name': 'a.txt', 'size': 11}
+        mock_request.side_effect = [upload_url_resp, confirm_resp]
 
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        storage = StorageSDK(config)
+        put_resp = Mock()
+        put_resp.ok = True
+        put_resp.status_code = 200
+        mock_put.return_value = put_resp
 
-        result = storage.request(
-            'GET',
-            storage.project_url('storage/files')
-        )
+        result = sdk.upload(b'hello world', path='docs/a.txt', content_type='text/plain')
 
-        assert len(result['files']) == 3
+        # First call to self.request is get_upload_url; confirm_upload is the second.
+        assert mock_request.call_count == 2
+        first_call_kwargs = mock_request.call_args_list[0][1]
+        assert first_call_kwargs['method'] == 'POST'
+        assert first_call_kwargs['url'] == f'{PROJECT_PREFIX}/storage/upload-url/'
 
-    @patch('requests.request')
-    def test_get_download_url(self, mock_request):
-        """Test getting a download URL for a file."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'file_id': 'file-123',
-            'download_url': 'https://storage.example.com/download/file-123',
-            'expires_in': 3600
-        }
-        mock_request.return_value = mock_response
+        second_call_kwargs = mock_request.call_args_list[1][1]
+        assert second_call_kwargs['method'] == 'POST'
+        assert second_call_kwargs['url'] == f'{PROJECT_PREFIX}/storage/confirm/'
+        assert second_call_kwargs['json'] == {'file_id': 'file-1'}
 
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        storage = StorageSDK(config)
+        mock_put.assert_called_once()
+        put_call_args, put_call_kwargs = mock_put.call_args
+        assert put_call_args[0] == 'https://minio.example.com/presigned'
+        assert put_call_kwargs['data'] == b'hello world'
+        assert put_call_kwargs['headers'] == {'Content-Type': 'text/plain'}
 
-        result = storage.request(
-            'GET',
-            storage.project_url('storage/files/file-123/download-url')
-        )
-
-        assert 'download_url' in result
-        assert result['expires_in'] == 3600
-
-    @patch('requests.request')
-    def test_create_file_directory(self, mock_request):
-        """Test creating a virtual directory/prefix."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 201
-        mock_response.json.return_value = {
-            'prefix': 'documents/2024/',
-            'status': 'created'
-        }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        storage = StorageSDK(config)
-
-        result = storage.request(
-            'POST',
-            storage.project_url('storage/directories'),
-            json_data={'prefix': 'documents/2024/'}
-        )
-
-        assert result['prefix'] == 'documents/2024/'
-
-
-class TestStorageWorkflow:
-    """Integration tests for storage workflows."""
-
-    @patch('requests.request')
-    def test_upload_and_retrieve_workflow(self, mock_request):
-        """Test uploading a file and retrieving it."""
-        responses = [
-            # Upload
-            Mock(ok=True, status_code=201, json=Mock(return_value={
-                'file_id': 'file-workflow',
-                'filename': 'document.pdf',
-                'size': 2048,
-                'url': 'https://storage.example.com/files/file-workflow'
-            })),
-            # Get info
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'file_id': 'file-workflow',
-                'filename': 'document.pdf',
-                'size': 2048
-            })),
-            # Get download URL
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'download_url': 'https://storage.example.com/download/file-workflow'
-            }))
-        ]
-        mock_request.side_effect = responses
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        storage = StorageSDK(config)
-
-        # Upload
-        upload_result = storage.request(
-            'POST',
-            storage.project_url('storage/upload'),
-            json_data={'filename': 'document.pdf'}
-        )
-        file_id = upload_result['file_id']
-
-        # Get info
-        info = storage.request(
-            'GET',
-            storage.project_url(f'storage/files/{file_id}')
-        )
-        assert info['size'] == 2048
-
-        # Get download URL
-        download = storage.request(
-            'GET',
-            storage.project_url(f'storage/files/{file_id}/download-url')
-        )
-        assert 'download_url' in download
-
-    @patch('requests.request')
-    def test_bulk_file_operations(self, mock_request):
-        """Test managing multiple files."""
-        responses = [
-            # Upload file 1
-            Mock(ok=True, status_code=201, json=Mock(return_value={
-                'file_id': 'file-1',
-                'filename': 'image1.jpg'
-            })),
-            # Upload file 2
-            Mock(ok=True, status_code=201, json=Mock(return_value={
-                'file_id': 'file-2',
-                'filename': 'image2.jpg'
-            })),
-            # List files
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'files': [
-                    {'file_id': 'file-1', 'filename': 'image1.jpg'},
-                    {'file_id': 'file-2', 'filename': 'image2.jpg'}
-                ],
-                'total': 2
-            }))
-        ]
-        mock_request.side_effect = responses
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        storage = StorageSDK(config)
-
-        # Upload multiple files
-        file1 = storage.request(
-            'POST',
-            storage.project_url('storage/upload'),
-            json_data={'filename': 'image1.jpg'}
-        )
-
-        file2 = storage.request(
-            'POST',
-            storage.project_url('storage/upload'),
-            json_data={'filename': 'image2.jpg'}
-        )
-
-        # List all files
-        files_list = storage.request(
-            'GET',
-            storage.project_url('storage/files')
-        )
-
-        assert files_list['total'] == 2
+        assert result['id'] == 'file-1'

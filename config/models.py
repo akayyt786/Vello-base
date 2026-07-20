@@ -1,12 +1,14 @@
 """
-Remote Config + A/B Testing models.
+Remote Config models.
 
-Mirrors Firebase Remote Config and A/B Testing:
+Mirrors Firebase Remote Config:
   - RemoteConfig: a key-value parameter with optional conditional overrides
   - ConfigCondition: conditional value override for a parameter
   - ConfigVersion: snapshot of all params at a point in time (publish history)
-  - Experiment: A/B or multivariate experiment
-  - ExperimentVariant: one arm/variant of an experiment
+
+A/B testing (Experiment/ExperimentVariant) used to live here too, but was a
+duplicate of the dedicated abtesting app (which SDKs actually use, and which
+additionally tracks assignment/conversion) -- see abtesting/models.py.
 """
 
 import uuid
@@ -146,94 +148,3 @@ class ConfigVersion(models.Model):
 
     def __str__(self):
         return f"v{self.version_number} @ {self.project_id}"
-
-
-class Experiment(models.Model):
-    """
-    An A/B test or multivariate experiment.
-    Users are deterministically assigned to a variant based on user_id hash.
-    """
-    STATUS_DRAFT = 'draft'
-    STATUS_RUNNING = 'running'
-    STATUS_PAUSED = 'paused'
-    STATUS_COMPLETED = 'completed'
-
-    STATUS_CHOICES = [
-        (STATUS_DRAFT, 'Draft'),
-        (STATUS_RUNNING, 'Running'),
-        (STATUS_PAUSED, 'Paused'),
-        (STATUS_COMPLETED, 'Completed'),
-    ]
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    project = models.ForeignKey(
-        'core.Project',
-        on_delete=models.CASCADE,
-        related_name='experiments',
-        db_index=True,
-    )
-    name = models.CharField(max_length=255)
-    description = models.TextField(blank=True)
-    status = models.CharField(
-        max_length=16,
-        choices=STATUS_CHOICES,
-        default=STATUS_DRAFT,
-        db_index=True,
-    )
-    start_date = models.DateTimeField(null=True, blank=True)
-    end_date = models.DateTimeField(null=True, blank=True)
-    traffic_fraction = models.FloatField(
-        default=1.0,
-        help_text='Proportion of users enrolled in this experiment (0.0–1.0)',
-    )
-    metric_event = models.CharField(
-        max_length=255,
-        blank=True,
-        help_text='Conversion event to optimize for (e.g. "purchase", "signup")',
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = 'remoteconfig_experiment'
-        unique_together = [['project', 'name']]
-        ordering = ['-created_at']
-
-    def __str__(self):
-        return f"{self.name} ({self.status}) @ {self.project_id}"
-
-
-class ExperimentVariant(models.Model):
-    """
-    One variant (arm) in an experiment.
-    Users assigned to this variant receive the config_overrides applied on top of base config.
-    """
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    experiment = models.ForeignKey(
-        Experiment,
-        on_delete=models.CASCADE,
-        related_name='variants',
-    )
-    name = models.CharField(max_length=255)
-    description = models.TextField(blank=True)
-    is_control = models.BooleanField(
-        default=False,
-        help_text='Marks this as the control/baseline variant',
-    )
-    traffic_weight = models.FloatField(
-        default=1.0,
-        help_text='Relative weight vs other variants — used for proportional assignment',
-    )
-    config_overrides = models.JSONField(
-        default=dict,
-        help_text='Config key-value overrides applied when user is in this variant',
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = 'remoteconfig_experiment_variant'
-        unique_together = [['experiment', 'name']]
-        ordering = ['created_at']
-
-    def __str__(self):
-        return f"{self.name} ({'control' if self.is_control else 'variant'}) in {self.experiment_id}"

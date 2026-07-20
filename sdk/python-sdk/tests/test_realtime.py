@@ -1,418 +1,93 @@
-"""Tests for OwnFirebase Realtime SDK."""
+"""Tests for OwnFirebase Realtime SDK.
+
+The Realtime SDK does not bundle a WebSocket client (see ownfirebase/realtime.py
+docstring for rationale). These tests cover the connection-agnostic pieces it
+does provide: building the correct WebSocket URL and the message envelopes a
+caller sends/receives over whatever WS client they bring themselves.
+"""
+
+import json
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock, call
-from ownfirebase import OwnFirebaseConfig, APIError
+
+from ownfirebase import OwnFirebaseConfig
 from ownfirebase.realtime import RealtimeSDK
+
+BASE_URL = 'http://localhost:8000'
+PROJECT_ID = 'test-project'
+TOKEN = 'test-token'
+
+
+@pytest.fixture
+def sdk():
+    config = OwnFirebaseConfig(base_url=BASE_URL, project_id=PROJECT_ID, access_token=TOKEN)
+    return RealtimeSDK(config)
 
 
 class TestRealtimeSDK:
     """Tests for the Realtime SDK."""
 
-    def test_realtime_init(self):
-        """Test Realtime SDK initialization."""
+    def test_realtime_init(self, sdk):
+        assert sdk.base_url == BASE_URL
+        assert sdk.project_id == PROJECT_ID
+
+    def test_get_websocket_url_http(self, sdk):
+        url = sdk.get_websocket_url()
+        assert url == f'ws://localhost:8000/ws/v1/projects/{PROJECT_ID}/listen/'
+
+    def test_get_websocket_url_https_becomes_wss(self):
         config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
+            base_url='https://api.example.com', project_id='proj-1', access_token=TOKEN
         )
-        realtime = RealtimeSDK(config)
-        assert realtime.base_url == 'http://localhost:8000'
-        assert realtime.project_id == 'test-project'
+        sdk = RealtimeSDK(config)
+        url = sdk.get_websocket_url()
+        assert url == 'wss://api.example.com/ws/v1/projects/proj-1/listen/'
 
-    @patch('requests.request')
-    def test_get_realtime_url(self, mock_request):
-        """Test getting WebSocket URL for realtime connection."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'ws_url': 'ws://localhost:8000/ws/test-project/realtime',
-            'token': 'ws-token-123'
-        }
-        mock_request.return_value = mock_response
+    def test_get_websocket_url_requires_project_id(self):
+        config = OwnFirebaseConfig(base_url=BASE_URL, access_token=TOKEN)
+        sdk = RealtimeSDK(config)
+        with pytest.raises(ValueError, match='project_id is required'):
+            sdk.get_websocket_url()
 
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        realtime = RealtimeSDK(config)
+    def test_build_subscribe_message(self, sdk):
+        msg = sdk.build_subscribe_message('users', query={'status': 'active'})
+        assert msg['type'] == 'subscribe'
+        assert msg['path'] == 'users'
+        assert msg['query'] == {'status': 'active'}
+        assert 'requestId' in msg
 
-        result = realtime.request(
-            'GET',
-            realtime.project_url('realtime/connect')
-        )
+    def test_build_subscribe_message_auto_increments_request_id(self, sdk):
+        msg1 = sdk.build_subscribe_message('users')
+        msg2 = sdk.build_subscribe_message('posts')
+        assert msg1['requestId'] != msg2['requestId']
 
-        assert result['ws_url'] == 'ws://localhost:8000/ws/test-project/realtime'
-        assert result['token'] == 'ws-token-123'
+    def test_build_subscribe_message_explicit_request_id(self, sdk):
+        msg = sdk.build_subscribe_message('users', request_id='custom-id')
+        assert msg['requestId'] == 'custom-id'
 
-    @patch('requests.request')
-    def test_subscribe_to_collection(self, mock_request):
-        """Test subscribing to collection changes."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'subscription_id': 'sub-123',
-            'collection': 'users',
-            'status': 'subscribed'
-        }
-        mock_request.return_value = mock_response
+    def test_build_unsubscribe_message(self, sdk):
+        msg = sdk.build_unsubscribe_message('sub-123')
+        assert msg['type'] == 'unsubscribe'
+        assert msg['subscriptionId'] == 'sub-123'
+        assert 'requestId' in msg
 
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        realtime = RealtimeSDK(config)
+    def test_build_ping_message(self, sdk):
+        msg = sdk.build_ping_message()
+        assert msg == {'type': 'ping'}
 
-        result = realtime.request(
-            'POST',
-            realtime.project_url('realtime/subscribe'),
-            json_data={'collection': 'users'}
-        )
+    def test_parse_message_change(self, sdk):
+        raw = json.dumps({
+            'type': 'change',
+            'subscriptionId': 'sub-123',
+            'event': 'modified',
+            'data': {'name': 'updated'},
+            'version': 2,
+        })
+        parsed = RealtimeSDK.parse_message(raw)
+        assert parsed['type'] == 'change'
+        assert parsed['event'] == 'modified'
+        assert parsed['data']['name'] == 'updated'
 
-        assert result['subscription_id'] == 'sub-123'
-        assert result['status'] == 'subscribed'
-
-    @patch('requests.request')
-    def test_subscribe_to_document(self, mock_request):
-        """Test subscribing to specific document changes."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'subscription_id': 'sub-doc-456',
-            'collection': 'users',
-            'document_id': 'user-123',
-            'status': 'subscribed'
-        }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        realtime = RealtimeSDK(config)
-
-        result = realtime.request(
-            'POST',
-            realtime.project_url('realtime/subscribe'),
-            json_data={'collection': 'users', 'document_id': 'user-123'}
-        )
-
-        assert result['document_id'] == 'user-123'
-
-    @patch('requests.request')
-    def test_unsubscribe(self, mock_request):
-        """Test unsubscribing from realtime updates."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 204
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        realtime = RealtimeSDK(config)
-
-        result = realtime.request(
-            'DELETE',
-            realtime.project_url('realtime/subscriptions/sub-123')
-        )
-
-        assert result is None
-
-    @patch('requests.request')
-    def test_list_subscriptions(self, mock_request):
-        """Test listing active subscriptions."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'subscriptions': [
-                {
-                    'subscription_id': 'sub-1',
-                    'collection': 'users',
-                    'created_at': '2024-01-01T00:00:00Z'
-                },
-                {
-                    'subscription_id': 'sub-2',
-                    'collection': 'posts',
-                    'document_id': 'post-123',
-                    'created_at': '2024-01-01T00:05:00Z'
-                }
-            ],
-            'total': 2
-        }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        realtime = RealtimeSDK(config)
-
-        result = realtime.request(
-            'GET',
-            realtime.project_url('realtime/subscriptions')
-        )
-
-        assert len(result['subscriptions']) == 2
-
-    @patch('requests.request')
-    def test_subscribe_with_filters(self, mock_request):
-        """Test subscribing to collection with filters."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'subscription_id': 'sub-filtered',
-            'collection': 'users',
-            'filter': {'status': 'active'},
-            'status': 'subscribed'
-        }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        realtime = RealtimeSDK(config)
-
-        result = realtime.request(
-            'POST',
-            realtime.project_url('realtime/subscribe'),
-            json_data={
-                'collection': 'users',
-                'filter': {'status': 'active'}
-            }
-        )
-
-        assert result['subscription_id'] == 'sub-filtered'
-
-    @patch('requests.request')
-    def test_get_subscription_info(self, mock_request):
-        """Test getting subscription details."""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'subscription_id': 'sub-123',
-            'collection': 'users',
-            'status': 'subscribed',
-            'created_at': '2024-01-01T00:00:00Z',
-            'message_count': 42
-        }
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        realtime = RealtimeSDK(config)
-
-        result = realtime.request(
-            'GET',
-            realtime.project_url('realtime/subscriptions/sub-123')
-        )
-
-        assert result['message_count'] == 42
-
-    @patch('requests.request')
-    def test_subscription_not_found(self, mock_request):
-        """Test retrieving non-existent subscription."""
-        mock_response = Mock()
-        mock_response.ok = False
-        mock_response.status_code = 404
-        mock_response.reason = 'Not Found'
-        mock_response.json.return_value = {'error': 'Subscription not found'}
-        mock_request.return_value = mock_response
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        realtime = RealtimeSDK(config)
-
-        with pytest.raises(APIError) as exc_info:
-            realtime.request(
-                'GET',
-                realtime.project_url('realtime/subscriptions/nonexistent')
-            )
-
-        assert exc_info.value.status == 404
-
-
-class TestRealtimeSubscriptionFlow:
-    """Integration tests for realtime subscription workflows."""
-
-    @patch('requests.request')
-    def test_complete_subscription_lifecycle(self, mock_request):
-        """Test complete lifecycle: subscribe -> get updates -> unsubscribe."""
-        responses = [
-            # Subscribe to collection
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'subscription_id': 'sub-lifecycle',
-                'collection': 'users',
-                'status': 'subscribed'
-            })),
-            # Get subscription info
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'subscription_id': 'sub-lifecycle',
-                'collection': 'users',
-                'status': 'subscribed',
-                'message_count': 5
-            })),
-            # Unsubscribe
-            Mock(ok=True, status_code=204)
-        ]
-        mock_request.side_effect = responses
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        realtime = RealtimeSDK(config)
-
-        # Subscribe
-        sub_response = realtime.request(
-            'POST',
-            realtime.project_url('realtime/subscribe'),
-            json_data={'collection': 'users'}
-        )
-        sub_id = sub_response['subscription_id']
-
-        # Check subscription status
-        info = realtime.request(
-            'GET',
-            realtime.project_url(f'realtime/subscriptions/{sub_id}')
-        )
-        assert info['message_count'] == 5
-
-        # Unsubscribe
-        result = realtime.request(
-            'DELETE',
-            realtime.project_url(f'realtime/subscriptions/{sub_id}')
-        )
-        assert result is None
-
-    @patch('requests.request')
-    def test_multiple_subscriptions(self, mock_request):
-        """Test managing multiple subscriptions."""
-        responses = [
-            # Subscribe to users
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'subscription_id': 'sub-users',
-                'collection': 'users'
-            })),
-            # Subscribe to posts
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'subscription_id': 'sub-posts',
-                'collection': 'posts'
-            })),
-            # Subscribe to comments
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'subscription_id': 'sub-comments',
-                'collection': 'comments'
-            })),
-            # List all subscriptions
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'subscriptions': [
-                    {'subscription_id': 'sub-users', 'collection': 'users'},
-                    {'subscription_id': 'sub-posts', 'collection': 'posts'},
-                    {'subscription_id': 'sub-comments', 'collection': 'comments'}
-                ],
-                'total': 3
-            }))
-        ]
-        mock_request.side_effect = responses
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        realtime = RealtimeSDK(config)
-
-        # Subscribe to multiple collections
-        sub1 = realtime.request(
-            'POST',
-            realtime.project_url('realtime/subscribe'),
-            json_data={'collection': 'users'}
-        )
-
-        sub2 = realtime.request(
-            'POST',
-            realtime.project_url('realtime/subscribe'),
-            json_data={'collection': 'posts'}
-        )
-
-        sub3 = realtime.request(
-            'POST',
-            realtime.project_url('realtime/subscribe'),
-            json_data={'collection': 'comments'}
-        )
-
-        # List all subscriptions
-        subs_list = realtime.request(
-            'GET',
-            realtime.project_url('realtime/subscriptions')
-        )
-
-        assert subs_list['total'] == 3
-
-    @patch('requests.request')
-    def test_subscription_with_query_filters(self, mock_request):
-        """Test subscription with specific query filters."""
-        responses = [
-            # Subscribe with filters
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'subscription_id': 'sub-filtered',
-                'collection': 'posts',
-                'filter': {'author_id': 'user-123', 'status': 'published'},
-                'status': 'subscribed'
-            })),
-            # Get filtered subscription info
-            Mock(ok=True, status_code=200, json=Mock(return_value={
-                'subscription_id': 'sub-filtered',
-                'collection': 'posts',
-                'filter': {'author_id': 'user-123', 'status': 'published'},
-                'message_count': 10
-            }))
-        ]
-        mock_request.side_effect = responses
-
-        config = OwnFirebaseConfig(
-            base_url='http://localhost:8000',
-            project_id='test-project',
-            access_token='test-token',
-        )
-        realtime = RealtimeSDK(config)
-
-        # Subscribe with filters
-        sub = realtime.request(
-            'POST',
-            realtime.project_url('realtime/subscribe'),
-            json_data={
-                'collection': 'posts',
-                'filter': {'author_id': 'user-123', 'status': 'published'}
-            }
-        )
-
-        # Get subscription details
-        info = realtime.request(
-            'GET',
-            realtime.project_url(f'realtime/subscriptions/{sub["subscription_id"]}')
-        )
-
-        assert info['message_count'] == 10
+    def test_parse_message_pong(self, sdk):
+        parsed = RealtimeSDK.parse_message(json.dumps({'type': 'pong'}))
+        assert parsed['type'] == 'pong'

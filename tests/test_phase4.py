@@ -3,8 +3,13 @@ Phase 4 comprehensive tests: Analytics, Remote Config, and Crashlytics apps.
 
 Covers:
   - Analytics: event logging, batch, user properties, conversion events, query
-  - Config: remote config parameters, fetch, publish, experiments, variant assignment
+  - Config: remote config parameters, fetch, publish
   - Crashlytics: crash reports, crash grouping, crash groups, performance traces, summary
+
+A/B experiments used to be tested here too (config.Experiment), but that model
+was a duplicate of the dedicated abtesting app (which SDKs actually use, and
+which additionally tracks assignment/conversion) -- see tests/test_phase5a.py's
+TestABTesting for the real, current experiment coverage.
 """
 
 import pytest
@@ -15,7 +20,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from core.models import Project, ProjectMembership, UserProfile
 from analytics.models import Event, UserProperty, ConversionEvent
-from config.models import RemoteConfig, ConfigVersion, Experiment, ExperimentVariant
+from config.models import RemoteConfig, ConfigVersion
 from crashlytics.models import CrashGroup, CrashReport, PerformanceTrace
 
 
@@ -606,162 +611,6 @@ class TestRemoteConfig:
         """A user not in project2 cannot list project2's config parameters."""
         resp = owner_client.get(self.PARAMS_URL.format(pid=project2.id))
         assert resp.status_code == 404
-
-
-# ---------------------------------------------------------------------------
-# Config: TestExperiments
-# ---------------------------------------------------------------------------
-
-@pytest.mark.django_db
-class TestExperiments:
-    EXP_URL = '/api/projects/{pid}/config/experiments/'
-    EXP_DETAIL_URL = '/api/projects/{pid}/config/experiments/{pk}/'
-    ASSIGN_URL = '/api/projects/{pid}/config/experiments/{pk}/assign/'
-    START_URL = '/api/projects/{pid}/config/experiments/{pk}/start/'
-    PAUSE_URL = '/api/projects/{pid}/config/experiments/{pk}/pause/'
-
-    def test_create_experiment_as_editor(self, project_with_editor, editor_client, project):
-        """Editors can create an A/B experiment."""
-        resp = editor_client.post(
-            self.EXP_URL.format(pid=project.id),
-            {
-                'name': 'button_color_test',
-                'description': 'Testing red vs blue CTA button',
-                'traffic_fraction': 0.5,
-                'metric_event': 'purchase',
-            },
-            format='json',
-        )
-        assert resp.status_code == 201
-        data = resp.json()
-        assert data['name'] == 'button_color_test'
-        assert data['status'] == 'draft'
-        assert Experiment.objects.filter(project=project, name='button_color_test').exists()
-
-    def test_create_experiment_viewer_rejected(self, project_with_viewer, viewer_client, project):
-        """Viewers must not be able to create experiments."""
-        resp = viewer_client.post(
-            self.EXP_URL.format(pid=project.id),
-            {'name': 'viewer_exp', 'traffic_fraction': 1.0},
-            format='json',
-        )
-        assert resp.status_code in (403, 404)
-
-    def test_start_experiment_transitions_to_running(self, owner_client, project):
-        """start/ transitions a draft experiment to running."""
-        exp = Experiment.objects.create(
-            project=project,
-            name='onboarding_flow_test',
-            status=Experiment.STATUS_DRAFT,
-        )
-        resp = owner_client.post(self.START_URL.format(pid=project.id, pk=exp.id))
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data['status'] == 'running'
-        exp.refresh_from_db()
-        assert exp.status == Experiment.STATUS_RUNNING
-        assert exp.start_date is not None
-
-    def test_start_already_running_experiment_rejected(self, owner_client, project):
-        """Attempting to start an already-running experiment returns 400."""
-        exp = Experiment.objects.create(
-            project=project,
-            name='already_running',
-            status=Experiment.STATUS_RUNNING,
-            start_date=timezone.now(),
-        )
-        resp = owner_client.post(self.START_URL.format(pid=project.id, pk=exp.id))
-        assert resp.status_code == 400
-        assert 'error' in resp.json()
-
-    def test_assign_user_to_variant_deterministic(self, owner_client, project):
-        """assign/ returns the same variant for the same user_id (deterministic)."""
-        exp = Experiment.objects.create(
-            project=project,
-            name='pricing_test',
-            status=Experiment.STATUS_RUNNING,
-            start_date=timezone.now(),
-            traffic_fraction=1.0,
-        )
-        ExperimentVariant.objects.create(
-            experiment=exp, name='control', is_control=True, traffic_weight=1.0,
-        )
-        ExperimentVariant.objects.create(
-            experiment=exp, name='variant_a', is_control=False, traffic_weight=1.0,
-        )
-
-        resp1 = owner_client.post(
-            self.ASSIGN_URL.format(pid=project.id, pk=exp.id),
-            {'user_id': 'stable-user-001'},
-            format='json',
-        )
-        resp2 = owner_client.post(
-            self.ASSIGN_URL.format(pid=project.id, pk=exp.id),
-            {'user_id': 'stable-user-001'},
-            format='json',
-        )
-        assert resp1.status_code == 200
-        assert resp2.status_code == 200
-        assert resp1.json()['variant']['name'] == resp2.json()['variant']['name']
-
-    def test_assign_returns_config_overrides(self, owner_client, project):
-        """assign/ response includes the variant's config_overrides."""
-        exp = Experiment.objects.create(
-            project=project,
-            name='cta_test',
-            status=Experiment.STATUS_RUNNING,
-            start_date=timezone.now(),
-            traffic_fraction=1.0,
-        )
-        ExperimentVariant.objects.create(
-            experiment=exp,
-            name='red_button',
-            is_control=False,
-            traffic_weight=1.0,
-            config_overrides={'cta_color': 'red'},
-        )
-        resp = owner_client.post(
-            self.ASSIGN_URL.format(pid=project.id, pk=exp.id),
-            {'user_id': 'test-user-999'},
-            format='json',
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data['enrolled'] is True
-        assert 'config_overrides' in data
-        assert 'variant' in data
-
-    def test_assign_requires_running_experiment(self, owner_client, project):
-        """assign/ on a draft experiment returns 400."""
-        exp = Experiment.objects.create(
-            project=project,
-            name='not_started_exp',
-            status=Experiment.STATUS_DRAFT,
-        )
-        ExperimentVariant.objects.create(experiment=exp, name='v1', traffic_weight=1.0)
-        resp = owner_client.post(
-            self.ASSIGN_URL.format(pid=project.id, pk=exp.id),
-            {'user_id': 'some-user'},
-            format='json',
-        )
-        assert resp.status_code == 400
-        assert 'error' in resp.json()
-
-    def test_assign_requires_user_id(self, owner_client, project):
-        """assign/ without user_id returns 400."""
-        exp = Experiment.objects.create(
-            project=project,
-            name='anon_assign_exp',
-            status=Experiment.STATUS_RUNNING,
-            start_date=timezone.now(),
-        )
-        resp = owner_client.post(
-            self.ASSIGN_URL.format(pid=project.id, pk=exp.id),
-            {},
-            format='json',
-        )
-        assert resp.status_code == 400
-        assert 'error' in resp.json()
 
 
 # ---------------------------------------------------------------------------

@@ -2,12 +2,16 @@
 Phase 6 tests.
 
 Covers:
-  - RemoteConfigParameter CRUD + fetch
   - WebhookEndpoint CRUD + deliveries
   - Analytics track/batch/summary/events
   - Billing subscription/usage/tiers + service helpers
   - Realtime broadcast (no-channel-layer guard)
   - Webhook payload signing + verification
+
+RemoteConfigParameter (the remoteconfig app) used to be tested here, but that
+app was a duplicate of config.RemoteConfig (which SDKs actually use) and has
+been removed -- see tests/test_phase4.py's TestRemoteConfig for the real,
+current remote-config coverage.
 """
 
 import hashlib
@@ -25,7 +29,6 @@ from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from core.models import Project, ProjectMembership, UserProfile
-from remoteconfig.models import RemoteConfigParameter
 from webhooks.models import WebhookEndpoint, WebhookDelivery
 from analytics.models import AnalyticsEvent
 from billing.models import ProjectSubscription, QuotaUsage
@@ -101,14 +104,6 @@ def viewer_client(viewer):
 # URL helpers
 # ---------------------------------------------------------------------------
 
-def config_params_url(project_id):
-    return f"/api/projects/{project_id}/remoteconfig/params/"
-
-
-def config_fetch_url(project_id):
-    return f"/api/projects/{project_id}/remoteconfig/fetch/"
-
-
 def webhook_endpoints_url(project_id):
     return f"/api/projects/{project_id}/webhooks/endpoints/"
 
@@ -155,91 +150,6 @@ def billing_checkout_url(project_id):
 
 def billing_portal_url(project_id):
     return f"/api/projects/{project_id}/billing/portal/"
-
-
-# ===========================================================================
-# TestRemoteConfig
-# ===========================================================================
-
-@pytest.mark.django_db
-class TestRemoteConfig:
-
-    def test_create_param(self, editor_client, project):
-        """Editor POST config param → 201."""
-        resp = editor_client.post(
-            config_params_url(project.id),
-            {"key": "theme", "value": "dark", "param_type": "string"},
-            format="json",
-        )
-        assert resp.status_code == 201
-        data = resp.json()
-        assert data["key"] == "theme"
-        assert data["value"] == "dark"
-
-    def test_viewer_cannot_create(self, viewer_client, project):
-        """Viewer role → 403."""
-        resp = viewer_client.post(
-            config_params_url(project.id),
-            {"key": "theme", "value": "dark", "param_type": "string"},
-            format="json",
-        )
-        assert resp.status_code == 403
-
-    def test_list_params(self, editor_client, project):
-        """Create 3 params, GET list → 3 results."""
-        for i in range(3):
-            RemoteConfigParameter.objects.create(
-                project=project,
-                key=f"param_{i}",
-                value=str(i),
-                param_type="string",
-            )
-        resp = editor_client.get(config_params_url(project.id))
-        assert resp.status_code == 200
-        body = resp.json()
-        # Could be paginated or plain list
-        results = body.get("results", body) if isinstance(body, dict) else body
-        assert len(results) == 3
-
-    def test_fetch_returns_typed_values(self, editor_client, project):
-        """GET fetch/ returns number and boolean as native types."""
-        RemoteConfigParameter.objects.create(
-            project=project, key="maxRetries", value="5", param_type="number", is_active=True
-        )
-        RemoteConfigParameter.objects.create(
-            project=project, key="debug", value="true", param_type="boolean", is_active=True
-        )
-        resp = editor_client.get(config_fetch_url(project.id))
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["maxRetries"] == 5
-        assert data["debug"] is True
-
-    def test_fetch_returns_only_active(self, editor_client, project):
-        """GET fetch/ only includes active params."""
-        RemoteConfigParameter.objects.create(
-            project=project, key="active_key", value="yes", param_type="string", is_active=True
-        )
-        RemoteConfigParameter.objects.create(
-            project=project, key="inactive_key", value="no", param_type="string", is_active=False
-        )
-        resp = editor_client.get(config_fetch_url(project.id))
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "active_key" in data
-        assert "inactive_key" not in data
-
-    def test_unique_key_per_project(self, editor_client, project):
-        """Creating same key twice → 400."""
-        RemoteConfigParameter.objects.create(
-            project=project, key="dup_key", value="v1", param_type="string"
-        )
-        resp = editor_client.post(
-            config_params_url(project.id),
-            {"key": "dup_key", "value": "v2", "param_type": "string"},
-            format="json",
-        )
-        assert resp.status_code == 400
 
 
 # ===========================================================================

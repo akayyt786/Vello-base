@@ -1,7 +1,7 @@
-"""Admin registrations for Remote Config + A/B Testing models."""
+"""Admin registrations for Remote Config models."""
 
 from django.contrib import admin
-from .models import RemoteConfig, ConfigCondition, ConfigVersion, Experiment, ExperimentVariant
+from .models import RemoteConfig, ConfigCondition, ConfigVersion
 
 
 class ConfigConditionInline(admin.TabularInline):
@@ -46,47 +46,3 @@ class ConfigVersionAdmin(admin.ModelAdmin):
     search_fields = ['description', 'project__name', 'project__slug', 'published_by__email']
     ordering = ['-version_number']
     readonly_fields = ['id', 'version_number', 'published_at']
-
-
-class ExperimentVariantInline(admin.TabularInline):
-    model = ExperimentVariant
-    extra = 0
-    fields = ['name', 'is_control', 'traffic_weight', 'config_overrides']
-    ordering = ['created_at']
-
-
-@admin.register(Experiment)
-class ExperimentAdmin(admin.ModelAdmin):
-    list_display = [
-        'name', 'project', 'status', 'traffic_fraction',
-        'start_date', 'end_date', 'created_at',
-    ]
-    list_filter = ['status', 'project']
-    search_fields = ['name', 'description', 'project__name', 'project__slug']
-    ordering = ['-created_at']
-    readonly_fields = ['id', 'created_at', 'updated_at']
-    inlines = [ExperimentVariantInline]
-    fieldsets = [
-        (None, {
-            'fields': [
-                'id', 'project', 'name', 'description', 'status',
-                'traffic_fraction', 'metric_event',
-            ],
-        }),
-        ('Schedule', {
-            'fields': ['start_date', 'end_date'],
-        }),
-        ('Timestamps', {
-            'fields': ['created_at', 'updated_at'],
-            'classes': ['collapse'],
-        }),
-    ]
-
-
-@admin.register(ExperimentVariant)
-class ExperimentVariantAdmin(admin.ModelAdmin):
-    list_display = ['name', 'experiment', 'is_control', 'traffic_weight', 'created_at']
-    list_filter = ['is_control']
-    search_fields = ['name', 'description', 'experiment__name', 'experiment__project__name']
-    ordering = ['experiment', 'created_at']
-    readonly_fields = ['id', 'created_at']
